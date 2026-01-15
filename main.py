@@ -1011,6 +1011,104 @@ async def admin_accounts_upload(
     }
 
 
+@app.get("/admin/accounts/expired")
+async def admin_accounts_expired(
+    hours: int = 1,
+    authorization: Optional[str] = Header(None)
+):
+    verify_admin_key(ADMIN_KEY, authorization)
+    
+    from datetime import timezone, timedelta
+    beijing_tz = timezone(timedelta(hours=8))
+    now = datetime.now(beijing_tz)
+    
+    expired_list = []
+    expiring_list = []
+    
+    for account_manager in multi_account_mgr.accounts.values():
+        cfg = account_manager.config
+        if cfg.disabled:
+            continue
+            
+        account_id = cfg.account_id
+        expires_at = cfg.expires_at
+        
+        if not expires_at:
+            continue
+            
+        try:
+            expire_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            expire_time = expire_time.replace(tzinfo=beijing_tz)
+            remaining_hours = (expire_time - now).total_seconds() / 3600
+            
+            if remaining_hours <= 0:
+                expired_list.append({
+                    "id": account_id,
+                    "expires_at": expires_at,
+                    "status": "expired"
+                })
+            elif remaining_hours <= hours:
+                expiring_list.append({
+                    "id": account_id,
+                    "expires_at": expires_at,
+                    "remaining_hours": round(remaining_hours, 2),
+                    "status": "expiring"
+                })
+        except:
+            continue
+    
+    return {
+        "expired": expired_list,
+        "expiring": expiring_list,
+        "total_expired": len(expired_list),
+        "total_expiring": len(expiring_list)
+    }
+
+
+@app.put("/admin/accounts/{account_id}/token")
+async def admin_accounts_update_token(
+    account_id: str,
+    token_data: dict = Body(...),
+    authorization: Optional[str] = Header(None)
+):
+    global multi_account_mgr
+    verify_admin_key(ADMIN_KEY, authorization)
+    
+    required_fields = ["secure_c_ses", "csesidx", "config_id"]
+    missing = [f for f in required_fields if f not in token_data]
+    if missing:
+        raise HTTPException(400, f"缺少必需字段: {', '.join(missing)}")
+    
+    accounts_list = load_accounts_from_source()
+    
+    found = False
+    for acc in accounts_list:
+        if acc.get("id") == account_id:
+            acc["secure_c_ses"] = token_data["secure_c_ses"]
+            acc["host_c_oses"] = token_data.get("host_c_oses")
+            acc["csesidx"] = token_data["csesidx"]
+            acc["config_id"] = token_data["config_id"]
+            acc["expires_at"] = token_data.get("expires_at")
+            found = True
+            break
+    
+    if not found:
+        raise HTTPException(404, f"账户 {account_id} 不存在")
+    
+    multi_account_mgr = _update_accounts_config(
+        accounts_list, multi_account_mgr, http_client, USER_AGENT,
+        ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+        SESSION_CACHE_TTL_SECONDS, global_stats
+    )
+    
+    logger.info(f"[CONFIG] 通过 API 更新账户 token: {account_id}")
+    return {
+        "status": "success",
+        "message": f"账户 {account_id} token 已更新",
+        "account_id": account_id
+    }
+
+
 # ---------- Auth endpoints (API) ----------
 @app.get("/admin/settings")
 @require_login()
