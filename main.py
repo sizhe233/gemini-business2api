@@ -1051,6 +1051,44 @@ async def admin_accounts_refresh_token(
         "account_id": account_id
     }
 
+
+@app.post("/admin/accounts/disable")
+async def admin_accounts_disable_by_token(
+    data: dict = Body(...),
+    authorization: Optional[str] = Header(None)
+):
+    global multi_account_mgr
+    verify_admin_key(ADMIN_KEY, authorization)
+    
+    account_id = data.get("account_id")
+    if not account_id:
+        raise HTTPException(400, "缺少 account_id 字段")
+    
+    accounts_list = load_accounts_from_source()
+    
+    found = False
+    for acc in accounts_list:
+        if acc.get("id") == account_id:
+            acc["disabled"] = True
+            found = True
+            break
+    
+    if not found:
+        raise HTTPException(404, f"账户 {account_id} 不存在")
+    
+    multi_account_mgr = _update_accounts_config(
+        accounts_list, multi_account_mgr, http_client, USER_AGENT,
+        ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+        SESSION_CACHE_TTL_SECONDS, global_stats
+    )
+    
+    logger.info(f"[CONFIG] 通过 API 禁用账户: {account_id}")
+    return {
+        "status": "success",
+        "message": f"账户 {account_id} 已禁用",
+        "account_id": account_id
+    }
+
 @app.delete("/admin/accounts/{account_id}")
 @require_login()
 async def admin_delete_account(request: Request, account_id: str):
