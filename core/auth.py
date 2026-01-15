@@ -7,6 +7,47 @@ from typing import Optional
 from fastapi import HTTPException
 
 
+def verify_admin_key(admin_key_value: str, authorization: Optional[str] = None) -> bool:
+    """
+    验证 Admin Key (Bearer Token)
+
+    Args:
+        admin_key_value: 配置的Admin Key值
+        authorization: Authorization Header中的值
+
+    Returns:
+        验证通过返回True，否则抛出HTTPException
+
+    支持格式：
+    1. Bearer YOUR_ADMIN_KEY
+    2. YOUR_ADMIN_KEY
+    """
+    if not admin_key_value:
+        raise HTTPException(
+            status_code=500,
+            detail="ADMIN_KEY not configured"
+        )
+
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header"
+        )
+
+    # 提取token（支持Bearer格式）
+    token = authorization
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+
+    if token != admin_key_value:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Admin Key"
+        )
+
+    return True
+
+
 def verify_api_key(api_key_value: str, authorization: Optional[str] = None) -> bool:
     """
     验证 API Key

@@ -924,6 +924,93 @@ async def admin_enable_account(request: Request, account_id: str):
         logger.error(f"[CONFIG] 启用账户失败: {str(e)}")
         raise HTTPException(500, f"启用失败: {str(e)}")
 
+# ---------- External API endpoints (Bearer Token Auth) ----------
+from core.auth import verify_admin_key
+
+@app.get("/admin/accounts/count")
+async def admin_accounts_count(authorization: Optional[str] = Header(None)):
+    """查询有效账号数量（Bearer Token 鉴权，供外部脚本调用）"""
+    verify_admin_key(ADMIN_KEY, authorization)
+    
+    total = len(multi_account_mgr.accounts)
+    active = 0
+    expired = 0
+    disabled = 0
+    rate_limited = 0
+    
+    for account_manager in multi_account_mgr.accounts.values():
+        cfg = account_manager.config
+        cooldown_seconds, cooldown_reason = account_manager.get_cooldown_info()
+        
+        if cfg.disabled:
+            disabled += 1
+        elif cfg.is_expired():
+            expired += 1
+        elif cooldown_seconds > 0 and cooldown_reason and "429" in cooldown_reason:
+            rate_limited += 1
+        elif account_manager.is_available:
+            active += 1
+        else:
+            disabled += 1
+    
+    return {
+        "total": total,
+        "active": active,
+        "expired": expired,
+        "disabled": disabled,
+        "rate_limited": rate_limited
+    }
+
+
+@app.post("/admin/accounts/upload")
+async def admin_accounts_upload(
+    account_data: dict = Body(...),
+    authorization: Optional[str] = Header(None)
+):
+    """推送新账号（Bearer Token 鉴权，供注册脚本调用）"""
+    global multi_account_mgr
+    verify_admin_key(ADMIN_KEY, authorization)
+    
+    required_fields = ["secure_c_ses", "csesidx", "config_id"]
+    missing = [f for f in required_fields if f not in account_data]
+    if missing:
+        raise HTTPException(400, f"缺少必需字段: {', '.join(missing)}")
+    
+    accounts_list = load_accounts_from_source()
+    
+    account_id = account_data.get("id", f"account_{len(accounts_list) + 1}")
+    
+    for i, acc in enumerate(accounts_list, 1):
+        existing_id = acc.get("id", f"account_{i}")
+        if existing_id == account_id:
+            raise HTTPException(409, f"账户 {account_id} 已存在")
+    
+    new_account = {
+        "id": account_id,
+        "secure_c_ses": account_data["secure_c_ses"],
+        "host_c_oses": account_data.get("host_c_oses"),
+        "csesidx": account_data["csesidx"],
+        "config_id": account_data["config_id"],
+        "expires_at": account_data.get("expires_at"),
+        "disabled": account_data.get("disabled", False)
+    }
+    
+    accounts_list.append(new_account)
+    
+    multi_account_mgr = _update_accounts_config(
+        accounts_list, multi_account_mgr, http_client, USER_AGENT,
+        ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+        SESSION_CACHE_TTL_SECONDS, global_stats
+    )
+    
+    logger.info(f"[CONFIG] 通过 API 添加账户: {account_id}")
+    return {
+        "status": "success",
+        "message": f"账户 {account_id} 已添加",
+        "account_count": len(multi_account_mgr.accounts)
+    }
+
+
 # ---------- Auth endpoints (API) ----------
 @app.get("/admin/settings")
 @require_login()

@@ -1,0 +1,31 @@
+services:
+  gemini-api:
+    build: .
+    container_name: gemini-business-api
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1280M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/public/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - komari_default
+
+networks:
+  komari_default:
+    external: true
