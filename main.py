@@ -1044,6 +1044,15 @@ async def admin_accounts_refresh_token(
         SESSION_CACHE_TTL_SECONDS, global_stats
     )
     
+    # 重置该账号的运行时状态
+    if account_id in multi_account_mgr.accounts:
+        account_mgr = multi_account_mgr.accounts[account_id]
+        account_mgr.is_available = True
+        account_mgr.error_count = 0
+        account_mgr.last_error_time = 0.0
+        account_mgr.last_429_time = 0.0
+        logger.info(f"[CONFIG] 已重置账户 {account_id} 的运行时状态")
+    
     logger.info(f"[CONFIG] 通过 API 更新账户 token: {account_id}")
     return {
         "status": "success",
