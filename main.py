@@ -867,69 +867,10 @@ async def admin_update_config(request: Request, accounts_data: list = Body(...))
         logger.error(f"[CONFIG] 更新配置失败: {str(e)}")
         raise HTTPException(500, f"更新失败: {str(e)}")
 
-@app.delete("/admin/accounts/{account_id}")
-@require_login()
-async def admin_delete_account(request: Request, account_id: str):
-    """删除单个账户"""
-    global multi_account_mgr
-    try:
-        multi_account_mgr = _delete_account(
-            account_id, multi_account_mgr, http_client, USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
-            SESSION_CACHE_TTL_SECONDS, global_stats
-        )
-        return {"status": "success", "message": f"账户 {account_id} 已删除", "account_count": len(multi_account_mgr.accounts)}
-    except Exception as e:
-        logger.error(f"[CONFIG] 删除账户失败: {str(e)}")
-        raise HTTPException(500, f"删除失败: {str(e)}")
-
-@app.put("/admin/accounts/{account_id}/disable")
-@require_login()
-async def admin_disable_account(request: Request, account_id: str):
-    """手动禁用账户"""
-    global multi_account_mgr
-    try:
-        multi_account_mgr = _update_account_disabled_status(
-            account_id, True, multi_account_mgr, http_client, USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
-            SESSION_CACHE_TTL_SECONDS, global_stats
-        )
-        return {"status": "success", "message": f"账户 {account_id} 已禁用", "account_count": len(multi_account_mgr.accounts)}
-    except Exception as e:
-        logger.error(f"[CONFIG] 禁用账户失败: {str(e)}")
-        raise HTTPException(500, f"禁用失败: {str(e)}")
-
-@app.put("/admin/accounts/{account_id}/enable")
-@require_login()
-async def admin_enable_account(request: Request, account_id: str):
-    """启用账户（同时重置错误禁用状态）"""
-    global multi_account_mgr
-    try:
-        multi_account_mgr = _update_account_disabled_status(
-            account_id, False, multi_account_mgr, http_client, USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
-            SESSION_CACHE_TTL_SECONDS, global_stats
-        )
-
-        # 重置运行时错误状态（允许手动恢复错误禁用的账户）
-        if account_id in multi_account_mgr.accounts:
-            account_mgr = multi_account_mgr.accounts[account_id]
-            account_mgr.is_available = True
-            account_mgr.error_count = 0
-            account_mgr.last_429_time = 0.0
-            logger.info(f"[CONFIG] 账户 {account_id} 错误状态已重置")
-
-        return {"status": "success", "message": f"账户 {account_id} 已启用", "account_count": len(multi_account_mgr.accounts)}
-    except Exception as e:
-        logger.error(f"[CONFIG] 启用账户失败: {str(e)}")
-        raise HTTPException(500, f"启用失败: {str(e)}")
-
-# ---------- External API endpoints (Bearer Token Auth) ----------
 from core.auth import verify_admin_key
 
 @app.get("/admin/accounts/count")
 async def admin_accounts_count(authorization: Optional[str] = Header(None)):
-    """查询有效账号数量（Bearer Token 鉴权，供外部脚本调用）"""
     verify_admin_key(ADMIN_KEY, authorization)
     
     total = len(multi_account_mgr.accounts)
@@ -967,7 +908,6 @@ async def admin_accounts_upload(
     account_data: dict = Body(...),
     authorization: Optional[str] = Header(None)
 ):
-    """推送新账号（Bearer Token 鉴权，供注册脚本调用）"""
     global multi_account_mgr
     verify_admin_key(ADMIN_KEY, authorization)
     
@@ -1065,14 +1005,17 @@ async def admin_accounts_expired(
     }
 
 
-@app.put("/admin/accounts/{account_id}/token")
-async def admin_accounts_update_token(
-    account_id: str,
+@app.post("/admin/accounts/refresh-token")
+async def admin_accounts_refresh_token(
     token_data: dict = Body(...),
     authorization: Optional[str] = Header(None)
 ):
     global multi_account_mgr
     verify_admin_key(ADMIN_KEY, authorization)
+    
+    account_id = token_data.get("account_id")
+    if not account_id:
+        raise HTTPException(400, "缺少 account_id 字段")
     
     required_fields = ["secure_c_ses", "csesidx", "config_id"]
     missing = [f for f in required_fields if f not in token_data]
@@ -1108,6 +1051,62 @@ async def admin_accounts_update_token(
         "account_id": account_id
     }
 
+@app.delete("/admin/accounts/{account_id}")
+@require_login()
+async def admin_delete_account(request: Request, account_id: str):
+    """删除单个账户"""
+    global multi_account_mgr
+    try:
+        multi_account_mgr = _delete_account(
+            account_id, multi_account_mgr, http_client, USER_AGENT,
+            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+            SESSION_CACHE_TTL_SECONDS, global_stats
+        )
+        return {"status": "success", "message": f"账户 {account_id} 已删除", "account_count": len(multi_account_mgr.accounts)}
+    except Exception as e:
+        logger.error(f"[CONFIG] 删除账户失败: {str(e)}")
+        raise HTTPException(500, f"删除失败: {str(e)}")
+
+@app.put("/admin/accounts/{account_id}/disable")
+@require_login()
+async def admin_disable_account(request: Request, account_id: str):
+    """手动禁用账户"""
+    global multi_account_mgr
+    try:
+        multi_account_mgr = _update_account_disabled_status(
+            account_id, True, multi_account_mgr, http_client, USER_AGENT,
+            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+            SESSION_CACHE_TTL_SECONDS, global_stats
+        )
+        return {"status": "success", "message": f"账户 {account_id} 已禁用", "account_count": len(multi_account_mgr.accounts)}
+    except Exception as e:
+        logger.error(f"[CONFIG] 禁用账户失败: {str(e)}")
+        raise HTTPException(500, f"禁用失败: {str(e)}")
+
+@app.put("/admin/accounts/{account_id}/enable")
+@require_login()
+async def admin_enable_account(request: Request, account_id: str):
+    """启用账户（同时重置错误禁用状态）"""
+    global multi_account_mgr
+    try:
+        multi_account_mgr = _update_account_disabled_status(
+            account_id, False, multi_account_mgr, http_client, USER_AGENT,
+            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+            SESSION_CACHE_TTL_SECONDS, global_stats
+        )
+
+        # 重置运行时错误状态（允许手动恢复错误禁用的账户）
+        if account_id in multi_account_mgr.accounts:
+            account_mgr = multi_account_mgr.accounts[account_id]
+            account_mgr.is_available = True
+            account_mgr.error_count = 0
+            account_mgr.last_429_time = 0.0
+            logger.info(f"[CONFIG] 账户 {account_id} 错误状态已重置")
+
+        return {"status": "success", "message": f"账户 {account_id} 已启用", "account_count": len(multi_account_mgr.accounts)}
+    except Exception as e:
+        logger.error(f"[CONFIG] 启用账户失败: {str(e)}")
+        raise HTTPException(500, f"启用失败: {str(e)}")
 
 # ---------- Auth endpoints (API) ----------
 @app.get("/admin/settings")
