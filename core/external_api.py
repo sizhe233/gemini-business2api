@@ -112,7 +112,7 @@ def create_external_routes(
         accounts_list.append(new_account)
         
         params = get_update_config_params()
-        new_mgr = update_accounts_config(accounts_list, **params)
+        new_mgr = update_accounts_config(accounts_list, *params)
         set_multi_account_mgr(new_mgr)
         
         logger.info(f"[EXTERNAL API] 通过 API 添加账户: {account_id}")
@@ -210,7 +210,7 @@ def create_external_routes(
             raise HTTPException(404, f"账户 {account_id} 不存在")
         
         params = get_update_config_params()
-        new_mgr = update_accounts_config(accounts_list, **params)
+        new_mgr = update_accounts_config(accounts_list, *params)
         set_multi_account_mgr(new_mgr)
         
         # 重置该账号的运行时状态
@@ -254,7 +254,7 @@ def create_external_routes(
             raise HTTPException(404, f"账户 {account_id} 不存在")
         
         params = get_update_config_params()
-        new_mgr = update_accounts_config(accounts_list, **params)
+        new_mgr = update_accounts_config(accounts_list, *params)
         set_multi_account_mgr(new_mgr)
         
         logger.info(f"[EXTERNAL API] 通过 API 禁用账户: {account_id}")

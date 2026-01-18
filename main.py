@@ -1010,15 +1010,15 @@ def _set_multi_account_mgr(new_mgr):
     multi_account_mgr = new_mgr
 
 def _get_update_config_params():
-    return {
-        "current_mgr": multi_account_mgr,
-        "http_client": http_client,
-        "user_agent": USER_AGENT,
-        "failure_threshold": ACCOUNT_FAILURE_THRESHOLD,
-        "cooldown_seconds": RATE_LIMIT_COOLDOWN_SECONDS,
-        "cache_ttl": SESSION_CACHE_TTL_SECONDS,
-        "global_stats": global_stats
-    }
+    return (
+        multi_account_mgr,
+        http_client,
+        USER_AGENT,
+        ACCOUNT_FAILURE_THRESHOLD,
+        RATE_LIMIT_COOLDOWN_SECONDS,
+        SESSION_CACHE_TTL_SECONDS,
+        global_stats
+    )
 
 create_external_routes(
     get_admin_key=_get_admin_key,
