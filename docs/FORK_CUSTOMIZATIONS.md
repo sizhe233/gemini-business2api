@@ -8,48 +8,58 @@
 
 ## 一、定制功能清单
 
-### 1.1 External API 接口 (Bearer Token 鉴权)
+### 1.1 External API 模块 (`core/external_api.py`)
 
-> **用途**: 供 `local_script` 本地脚本调用，实现账号自动上传、刷新等功能。
-> 
-> **鉴权方式**: `Authorization: Bearer {ADMIN_KEY}`，非 Session 登录。
+> **重构说明**: 2026-01-18 将 External API 从 main.py 抽离为独立模块，避免合并上游时冲突。
+
+**用途**: 供 `local_script` 本地脚本调用，实现账号自动上传、刷新等功能。
+
+**鉴权方式**: `Authorization: Bearer {ADMIN_KEY}`，非 Session 登录。
+
+**路径前缀**: `/external` (与上游 `/admin` 路径分离)
 
 | 接口 | 方法 | 用途 |
 |------|------|------|
-| `/admin/accounts/count` | GET | 查询账号统计 (总数/活跃/过期/禁用/限流) |
-| `/admin/accounts/upload` | POST | 上传新账号 (注册成功后自动调用) |
-| `/admin/accounts/expired` | GET | 查询即将过期账号 (供刷新脚本调用) |
-| `/admin/accounts/refresh-token` | POST | 刷新账号 token (续期时更新凭证) |
-| `/admin/accounts/disable` | POST | 通过 API 禁用账号 |
+| `/external/accounts/count` | GET | 查询账号统计 (总数/活跃/过期/禁用/限流) |
+| `/external/accounts/upload` | POST | 上传新账号 (注册成功后自动调用) |
+| `/external/accounts/expired` | GET | 查询即将过期账号 (供刷新脚本调用) |
+| `/external/accounts/refresh-token` | POST | 刷新账号 token (续期时更新凭证) |
+| `/external/accounts/disable` | POST | 通过 API 禁用账号 |
 
 **调用示例**:
 
 ```bash
 # 查询账号统计
 curl -H "Authorization: Bearer your_admin_key" \
-  https://your-server/admin/accounts/count
+  https://your-server/external/accounts/count
 
 # 上传新账号
 curl -X POST -H "Authorization: Bearer your_admin_key" \
   -H "Content-Type: application/json" \
   -d '{"secure_c_ses":"xxx","csesidx":"xxx","config_id":"xxx"}' \
-  https://your-server/admin/accounts/upload
+  https://your-server/external/accounts/upload
+
+# 查询即将过期账号 (1小时内)
+curl -H "Authorization: Bearer your_admin_key" \
+  "https://your-server/external/accounts/expired?hours=1"
+
+# 刷新账号 token
+curl -X POST -H "Authorization: Bearer your_admin_key" \
+  -H "Content-Type: application/json" \
+  -d '{"account_id":"xxx","secure_c_ses":"xxx","csesidx":"xxx","config_id":"xxx"}' \
+  https://your-server/external/accounts/refresh-token
 ```
 
-### 1.2 core/auth.py 文件
+### 1.2 core/auth.py 扩展
 
-> **重要**: 上游已删除此文件（代码移入 main.py），但我们需要保留它。
+上游 `core/auth.py` 只有 `verify_api_key()` 函数。
 
-提供 `verify_admin_key()` 函数，用于 External API 的 Bearer Token 鉴权。
+我们额外添加了 `verify_admin_key()` 函数，用于 External API 的 Bearer Token 鉴权：
 
 ```python
-from core.auth import verify_admin_key
-
-# 在 API 端点中使用
-@app.get("/admin/accounts/count")
-async def admin_accounts_count(authorization: Optional[str] = Header(None)):
-    verify_admin_key(ADMIN_KEY, authorization)
-    # ...
+def verify_admin_key(admin_key_value: str, authorization: Optional[str] = None) -> bool:
+    """验证 Admin Key (Bearer Token)"""
+    # 支持格式: Bearer YOUR_KEY 或 YOUR_KEY
 ```
 
 ### 1.3 local_script 目录
@@ -86,19 +96,45 @@ local_script/
 
 ---
 
-## 二、合并上游的处理逻辑
+## 二、代码架构
 
-### 2.1 冲突文件处理策略
+### 2.1 定制文件列表
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `core/external_api.py` | **新增** | External API 独立模块 |
+| `core/auth.py` | **扩展** | 添加 `verify_admin_key()` 函数 |
+| `main.py` | **微改** | 导入并注册 external_router |
+| `local_script/` | **新增** | 本地注册脚本 (gitignore) |
+| `.gitignore` | **扩展** | 添加 local_script 忽略项 |
+
+### 2.2 main.py 集成代码
+
+```python
+# ---------- External API (Fork定制功能，独立模块) ----------
+from core.external_api import create_external_routes, router as external_router
+
+# ... 配置函数 ...
+
+create_external_routes(...)
+app.include_router(external_router)
+```
+
+---
+
+## 三、合并上游的处理逻辑
+
+### 3.1 冲突文件处理策略
 
 | 文件 | 策略 | 说明 |
 |------|------|------|
-| `main.py` | **合并保留** | 保留我们的 5 个 External API 接口 + 接受上游新增功能 |
-| `core/auth.py` | **保留本地** | 上游删除此文件，我们必须保留 |
-| `core/config.py` | **接受上游** | 上游新增配置项，无冲突 |
-| `.gitignore` | **合并** | 保留我们的 `local_script/` + 上游的 `old_version.py` |
+| `core/external_api.py` | **保留本地** | 上游无此文件，不会冲突 |
+| `core/auth.py` | **合并** | 保留我们的 `verify_admin_key()`，接受上游对 `verify_api_key()` 的修改 |
+| `main.py` | **合并** | 保留 External API 导入代码块，接受上游新功能 |
+| `.gitignore` | **合并** | 保留我们的 `local_script/` |
 | 前端文件 | **接受上游** | 前端变更采用上游版本 |
 
-### 2.2 合并步骤 (标准流程)
+### 3.2 合并步骤 (标准流程)
 
 ```bash
 # 1. 创建备份分支
@@ -111,8 +147,8 @@ git fetch upstream
 git merge upstream/main --no-commit
 
 # 4. 解决冲突
-#    - main.py: 保留 External API 接口代码块
-#    - core/auth.py: 如被删除，恢复: git checkout HEAD -- core/auth.py
+#    - core/auth.py: 保留 verify_admin_key()，合并上游改动
+#    - main.py: 保留 External API 导入代码块
 #    - .gitignore: 合并两边内容
 
 # 5. 验证
@@ -124,35 +160,37 @@ git add .
 git commit -m "merge: 合并上游更新 (功能描述)"
 ```
 
-### 2.3 main.py 冲突解决模板
+### 3.3 main.py 冲突解决模板
 
-合并 `main.py` 时，确保保留以下代码块（位于文件末尾）：
+合并 `main.py` 时，确保保留以下代码块：
 
 ```python
-# ---------- External API endpoints (Bearer Token Auth, for local_script) ----------
-from core.auth import verify_admin_key
+# ---------- External API (Fork定制功能，独立模块) ----------
+from core.external_api import create_external_routes, router as external_router
 
-@app.get("/admin/accounts/count")
-async def admin_accounts_count(...): ...
+def _get_admin_key(): ...
+def _get_multi_account_mgr(): ...
+def _set_multi_account_mgr(new_mgr): ...
+def _get_update_config_params(): ...
 
-@app.post("/admin/accounts/upload")
-async def admin_accounts_upload(...): ...
-
-@app.get("/admin/accounts/expired")
-async def admin_accounts_expired(...): ...
-
-@app.post("/admin/accounts/refresh-token")
-async def admin_accounts_refresh_token(...): ...
-
-@app.post("/admin/accounts/disable")
-async def admin_accounts_disable_by_token(...): ...
+create_external_routes(...)
+app.include_router(external_router)
 ```
 
 ---
 
-## 三、合并历史记录
+## 四、合并历史记录
 
-### 2026-01-18 合并
+### 2026-01-18 重构
+
+| 项目 | 内容 |
+|------|------|
+| **类型** | 代码重构 |
+| **变更** | External API 从 main.py 抽离为 `core/external_api.py` |
+| **路径变更** | `/admin/accounts/*` → `/external/accounts/*` |
+| **原因** | 避免与上游 `/admin/*` 路径冲突，便于合并 |
+
+### 2026-01-18 合并上游
 
 | 项目 | 内容 |
 |------|------|
@@ -171,25 +209,23 @@ async def admin_accounts_disable_by_token(...): ...
 - 免责声明页面
 - 新增配置项: `duckmail_*`, `browser_*`, `register_*`, `refresh_window_hours`
 
-**验证结果**:
-- ✅ 前端构建成功 (1.83s)
-- ✅ 后端模块导入成功
-- ✅ External API 接口保留完整
+---
+
+## 五、注意事项
+
+1. **合并前必须创建备份分支**
+2. **core/external_api.py 是我们的独立模块** - 上游无此文件，不会冲突
+3. **core/auth.py 需合并** - 保留 `verify_admin_key()`，接受上游改动
+4. **API 路径已变更** - `/admin/accounts/*` → `/external/accounts/*`
+5. **local_script 需同步更新 API 路径** - 如果使用旧路径需修改
 
 ---
 
-## 四、注意事项
+## 六、相关文件
 
-1. **每次合并前必须创建备份分支**
-2. **core/auth.py 绝对不能删除** - 上游已移除此文件，但我们依赖它
-3. **main.py 的 External API 代码块必须保留** - 位于文件末尾
-4. **local_script 保持独立** - 不受上游影响，成功率更高
-5. **合并后务必验证** - 前端构建 + 后端导入
-
----
-
-## 五、相关文件
-
-- `core/auth.py` - Bearer Token 鉴权函数
-- `local_script/` - 本地注册脚本 (已 gitignore)
-- `docs/FORK_CUSTOMIZATIONS.md` - 本文档
+| 文件 | 说明 |
+|------|------|
+| `core/external_api.py` | External API 独立模块 |
+| `core/auth.py` | Bearer Token 鉴权函数 |
+| `local_script/` | 本地注册脚本 (已 gitignore) |
+| `docs/FORK_CUSTOMIZATIONS.md` | 本文档 |
