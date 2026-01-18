@@ -44,5 +44,8 @@ static/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local customizations
 gemini_accounts/
 local_script/
+old_version.py
