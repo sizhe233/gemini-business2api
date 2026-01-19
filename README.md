@@ -17,6 +17,8 @@
 
 <p align="center"><em>注意：HF Spaces 部署不支持自动注册/刷新功能（需 Chrome 浏览器），请手动添加账号</em></p>
 
+<p align="center"><em>💡 提示：远程环境(Hugging Face/Linux)和本地环境可共用同一数据库，账户数据将自动保持同步</em></p>
+
 <p align="center">将 Gemini Business 转换为 OpenAI 兼容接口，支持多账号负载均衡、图像生成、多模态能力与内置管理面板。</p>
 
 ---
@@ -75,6 +77,18 @@
 git clone https://github.com/Dreamy-rain/gemini-business2api.git
 cd gemini-business2api
 bash setup.sh
+
+cp .env.example .env
+# 编辑 .env 设置 ADMIN_KEY
+
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate.bat  # Windows
+
+python main.py
+
+# pm2后台运行
+# 确保你在项目目录下
+pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 ```
 
 **Windows:**
@@ -82,16 +96,30 @@ bash setup.sh
 git clone https://github.com/Dreamy-rain/gemini-business2api.git
 cd gemini-business2api
 setup.bat
+
+copy .env.example .env
+# 编辑 .env 设置 ADMIN_KEY
+
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate.bat  # Windows
+
+python main.py
+
+# pm2后台运行
+# 确保你在项目目录下
+pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 ```
 
-安装脚本会自动完成：
-- 同步最新代码
-- 构建前端
-- 创建 Python 虚拟环境
-- 安装依赖
-- 创建配置文件
+**脚本功能：**
+- ✅ 自动同步最新代码
+- ✅ 更新前端到最新版本
+- ✅ 创建/更新 Python 虚拟环境
+- ✅ 安装/更新依赖
+- ✅ 自动创建 `.env` 配置文件（如不存在）
 
-完成后编辑 `.env` 设置 `ADMIN_KEY`，然后运行 `python main.py`
+**首次安装：** 完成后编辑 `.env` 设置 `ADMIN_KEY`，然后运行 `python main.py`
+
+**更新项目：** 直接运行相同命令即可，脚本会自动更新所有组件（代码、依赖、前端）
 
 ### 方式二：手动部署
 
@@ -113,6 +141,7 @@ source .venv/bin/activate  # Linux/macOS
 # 安装 Python 依赖
 pip install -r requirements.txt
 cp .env.example .env
+# win copy .env.example .env
 # 编辑 .env 设置 ADMIN_KEY
 python main.py
 
@@ -121,35 +150,35 @@ python main.py
 pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 ```
 
-### 方式三：Docker
+### 方式三：Docker Compose（推荐用于生产环境）
+
+**支持 ARM64 和 AMD64 架构**
 
 ```bash
-docker build -t gemini-business2api .
-docker run -d -p 7860:7860 \
-  -e ADMIN_KEY=your_admin_key \
-  gemini-business2api
+# 1. 克隆仓库
+git clone https://github.com/Dreamy-rain/gemini-business2api.git
+cd gemini-business2api
+
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env 设置 ADMIN_KEY
+
+# 3. 启动服务
+docker-compose up -d
+
+# 4. 查看日志
+docker-compose logs -f
+
+# 5. 更新到最新版本
+docker-compose pull && docker-compose up -d
 ```
 
-### 更新
+感谢 [PR #9](https://github.com/Dreamy-rain/gemini-business2api/pull/9) 优化 Dockerfile 构建
 
-**Linux/macOS:**
-```bash
-bash setup.sh --update
-```
 
-**Windows:**
-```cmd
-setup.bat --update
-```
+### 数据库持久化（可选）（强烈推荐）
 
-**HuggingFace:**
-```
-暂时只能重新部署更新，记得保存数据，建议用 PostgreSQL
-```
-
-更新脚本会自动备份配置、拉取最新代码、更新依赖并构建前端。
-
-### 数据库持久化（可选）
+💡 提示：远程环境(Hugging Face/Linux)和本地环境可共用同一数据库，账户数据将自动保持同步
 
 - HF Spaces 环境建议开启，否则重启会丢数据
 - 设置 `DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require`
