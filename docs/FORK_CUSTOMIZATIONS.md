@@ -194,6 +194,20 @@ app.include_router(external_router)
 | **路径变更** | `/admin/accounts/*` → `/external/accounts/*` |
 | **原因** | 避免与上游 `/admin/*` 路径冲突，便于合并 |
 
+### 2026-01-19 合并上游
+
+| 项目 | 内容 |
+|------|------|
+| **上游提交数** | 10 个 |
+| **冲突文件** | `.github/workflows/docker-build.yml` |
+| **处理方式** | 继续删除 docker-build.yml (本 fork 不使用 CI/CD) |
+
+**上游新增功能**:
+- Docker 构建优化：健康检查端点 `/admin/health`、HEALTHCHECK 指令、日志限制
+- Linux 环境修复：强制使用 DP 无头模式、自动检测 Chromium 路径
+- 账号过期时间时区问题修复
+- Python 3.12 兼容性：使用 uv 自动管理 Python 3.11 环境
+
 ### 2026-01-18 合并上游
 
 | 项目 | 内容 |

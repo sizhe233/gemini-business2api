@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="docs/logo.svg" width="120" alt="Gemini Business2API logo" />
 </p>
 <h1 align="center">Gemini Business2API</h1>
@@ -7,7 +7,7 @@
 <p align="center">
   <strong>简体中文</strong> | <a href="docs/README_EN.md">English</a>
 </p>
-<p align="center"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" /> <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" /> <img src="https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white" /> <img src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white" /> <img src="https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white" /> <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" /></p>
+<p align="center"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" /> <img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" /> <img src="https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white" /> <img src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white" /> <img src="https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white" /> <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" /></p>
 
 <p align="center">
   <a href="https://huggingface.co/spaces/xiaoyukkkk/gemini-business2api?duplicate=true">
@@ -70,15 +70,23 @@
 
 ## 🚀 快速开始
 
+### 前置要求
+
+- **Python 3.11**（必需，项目使用 uv 自动管理 Python 版本）
+- **Git**
+- **Node.js & npm**（用于构建前端）
+- **uv**（安装脚本会自动安装）
+
+> **⚠️ 注意**：Python 3.12 不支持，因为部分依赖使用 `distutils`（Python 3.12 已移除）。安装脚本会自动下载并安装 Python 3.11，无需手动安装。
+
 ### 方式一：使用安装脚本（推荐）
 
-**Linux/macOS:**
+**Linux/macOS (WSL):**
 ```bash
 git clone https://github.com/Dreamy-rain/gemini-business2api.git
 cd gemini-business2api
 bash setup.sh
 
-cp .env.example .env
 # 编辑 .env 设置 ADMIN_KEY
 
 source .venv/bin/activate  # Linux/macOS
@@ -87,7 +95,6 @@ source .venv/bin/activate  # Linux/macOS
 python main.py
 
 # pm2后台运行
-# 确保你在项目目录下
 pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 ```
 
@@ -97,7 +104,6 @@ git clone https://github.com/Dreamy-rain/gemini-business2api.git
 cd gemini-business2api
 setup.bat
 
-copy .env.example .env
 # 编辑 .env 设置 ADMIN_KEY
 
 source .venv/bin/activate  # Linux/macOS
@@ -106,11 +112,12 @@ source .venv/bin/activate  # Linux/macOS
 python main.py
 
 # pm2后台运行
-# 确保你在项目目录下
-pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
+pm2 start main.py --name gemini-api --interpreter ./.venv/Scripts/python.exe
 ```
 
-**脚本功能：**
+**安装脚本功能：**
+- ✅ 自动安装/更新 uv（现代 Python 包管理器）
+- ✅ 自动下载并安装 Python 3.11（如果系统中没有）
 - ✅ 自动同步最新代码
 - ✅ 更新前端到最新版本
 - ✅ 创建/更新 Python 虚拟环境
@@ -119,7 +126,7 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 
 **首次安装：** 完成后编辑 `.env` 设置 `ADMIN_KEY`，然后运行 `python main.py`
 
-**更新项目：** 直接运行相同命令即可，脚本会自动更新所有组件（代码、依赖、前端）
+**更新项目：** 直接运行相同命令即可，脚本会自动更新所有组件（代码、依赖、前端、Python 环境）
 
 ### 方式二：手动部署
 
@@ -127,26 +134,32 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 git clone https://github.com/Dreamy-rain/gemini-business2api.git
 cd gemini-business2api
 
+# 安装 uv（必需）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 安装 Python 3.11（必需）
+uv python install 3.11
+
 # 构建前端
 cd frontend
 npm install
 npm run build
 cd ..
 
-# 创建虚拟环境（推荐）
-python3 -m venv .venv
+# 创建虚拟环境
+uv venv --python 3.11 .venv
 source .venv/bin/activate  # Linux/macOS
 # .venv\Scripts\activate.bat  # Windows
 
 # 安装 Python 依赖
-pip install -r requirements.txt
+uv pip install -r requirements.txt
+
 cp .env.example .env
-# win copy .env.example .env
+# win: copy .env.example .env
 # 编辑 .env 设置 ADMIN_KEY
 python main.py
 
 # pm2后台运行
-# 确保你在项目目录下
 pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 ```
 
@@ -247,6 +260,3 @@ docker-compose pull && docker-compose up -d
 [![Star History Chart](https://api.star-history.com/svg?repos=Dreamy-rain/gemini-business2api&type=date&legend=top-left)](https://www.star-history.com/#Dreamy-rain/gemini-business2api&type=date&legend=top-left)
 
 **如果这个项目对你有帮助，请给个 ⭐ Star!**
-
-
-

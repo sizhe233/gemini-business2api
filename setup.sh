@@ -2,6 +2,7 @@
 
 # Gemini Business2API Setup Script
 # Handles both installation and updates automatically
+# Uses uv for Python environment management
 # Usage: ./setup.sh
 
 set -e  # Exit on error
@@ -41,14 +42,41 @@ if ! command -v git &> /dev/null; then
     exit 1
 fi
 
-# Check if python3 is installed
-if ! command -v python3 &> /dev/null; then
-    print_error "Python3 is not installed. Please install Python 3.11+ first."
-    exit 1
+# Step 1: Install or update uv
+print_step "Step 1: Installing/Updating uv..."
+if ! command -v uv &> /dev/null; then
+    print_info "uv not found, installing..."
+    # Install uv using pipx or pip
+    if command -v pipx &> /dev/null; then
+        pipx install uv
+    elif command -v pip &> /dev/null; then
+        pip install --user uv
+    else
+        # Fallback: download and install uv binary
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+    print_success "uv installed successfully"
+else
+    print_info "Updating uv to latest version..."
+    uv pip install --upgrade uv
+    print_success "uv updated"
 fi
+echo ""
 
-# Step 1: Pull latest code from git
-print_step "Step 1: Syncing code from repository..."
+# Step 2: Ensure Python 3.11 is available
+print_step "Step 2: Ensuring Python 3.11 is available..."
+if ! uv python list | grep -q "3.11"; then
+    print_info "Python 3.11 not found, installing..."
+    uv python install 3.11
+    print_success "Python 3.11 installed"
+else
+    print_success "Python 3.11 is already available"
+fi
+echo ""
+
+# Step 3: Pull latest code from git
+print_step "Step 3: Syncing code from repository..."
 print_info "Fetching latest changes..."
 git fetch origin
 
@@ -60,8 +88,8 @@ else
 fi
 echo ""
 
-# Step 2: Setup .env file if it doesn't exist
-print_step "Step 2: Checking configuration..."
+# Step 4: Setup .env file if it doesn't exist
+print_step "Step 4: Checking configuration..."
 if [ -f ".env" ]; then
     print_info ".env file exists"
 else
@@ -76,32 +104,26 @@ else
 fi
 echo ""
 
-# Step 3: Setup Python virtual environment
-print_step "Step 3: Setting up Python environment..."
+# Step 5: Setup Python virtual environment
+print_step "Step 5: Setting up Python environment..."
 if [ -d ".venv" ]; then
     print_info "Virtual environment already exists"
 else
-    print_info "Creating virtual environment..."
-    python3 -m venv .venv
+    print_info "Creating virtual environment with Python 3.11..."
+    uv venv --python 3.11 .venv
     print_success "Virtual environment created"
 fi
-
-print_info "Activating virtual environment..."
-source .venv/bin/activate
-
-print_info "Upgrading pip..."
-pip install --upgrade pip --quiet
-print_success "Pip upgraded"
 echo ""
 
-# Step 4: Install/Update Python dependencies
-print_step "Step 4: Installing Python dependencies..."
-pip install -r requirements.txt --upgrade
+# Step 6: Install/Update Python dependencies
+print_step "Step 6: Installing Python dependencies..."
+print_info "Using uv to install dependencies (this may take a moment)..."
+uv pip install --python .venv/bin/python -r requirements.txt --system
 print_success "Python dependencies installed"
 echo ""
 
-# Step 5: Setup frontend
-print_step "Step 5: Setting up frontend..."
+# Step 7: Setup frontend
+print_step "Step 7: Setting up frontend..."
 if [ -d "frontend" ]; then
     cd frontend
 
@@ -126,7 +148,7 @@ else
 fi
 echo ""
 
-# Step 6: Show completion message
+# Step 8: Show completion message
 echo "=========================================="
 print_success "Setup completed successfully!"
 echo "=========================================="
@@ -139,7 +161,7 @@ if [ -f ".env" ]; then
     echo "     ${BLUE}nano .env${NC}  or  ${BLUE}vim .env${NC}"
     echo ""
     echo "  2. Start the service:"
-    echo "     ${BLUE}python main.py${NC}"
+    echo "     ${BLUE}uv run python main.py${NC}"
     echo ""
     echo "  3. Access the admin panel:"
     echo "     ${BLUE}http://localhost:7860/${NC}"
