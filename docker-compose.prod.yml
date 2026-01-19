@@ -3,7 +3,7 @@ services:
     build: .
     container_name: gemini-business-api
     volumes:
-      - ./data:/app/data
+      - gemini-api-data:/app/data
     env_file:
       - .env
     restart: unless-stopped
@@ -29,3 +29,6 @@ services:
 networks:
   komari_default:
     external: true
+
+volumes:
+  gemini-api-data:
