@@ -94,6 +94,10 @@ gemini_accounts/
 local_script/
 ```
 
+### 1.5 删除 GitHub Actions
+
+已删除 `.github/workflows/docker-build.yml`，本 fork 不使用 CI/CD 自动构建。
+
 ---
 
 ## 二、代码架构
