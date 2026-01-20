@@ -1664,6 +1664,11 @@ async def chat_impl(
 
                 break
 
+            except asyncio.CancelledError:
+                elapsed = time.time() - start_ts
+                logger.warning(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] 客户端断开连接 (请求已进行 {elapsed:.2f}秒)")
+                await finalize_result("error", 499, "Client disconnected")
+                raise
             except (httpx.HTTPError, ssl.SSLError, HTTPException) as e:
                 status_code = e.status_code if isinstance(e, HTTPException) else None
                 error_detail = (
@@ -1963,6 +1968,12 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
                     file_ids_info = (file_ids, session_name)
                     logger.info(f"[IMAGE] [{account_manager.config.account_id}] [req_{request_id}] 检测到{len(file_ids)}张生成图片")
 
+        except asyncio.CancelledError:
+            # 客户端断开连接（用户取消、超时、网络中断）
+            elapsed = time.time() - start_time
+            logger.warning(f"[API] [{account_manager.config.account_id}] [req_{request_id}] 客户端断开连接 (已传输 {elapsed:.2f}秒)")
+            uptime_tracker.record_request(model_name, False, status_code=499)  # 499: Client Closed Request (nginx)
+            raise
         except ValueError as e:
             uptime_tracker.record_request(model_name, False)
             logger.error(f"[API] [{account_manager.config.account_id}] [req_{request_id}] JSON解析失败: {str(e)}")
