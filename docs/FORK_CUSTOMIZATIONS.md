@@ -185,6 +185,26 @@ app.include_router(external_router)
 
 ## 四、合并历史记录
 
+### 2026-01-20 合并上游 + 客户端断开日志
+
+| 项目 | 内容 |
+|------|------|
+| **提交** | `5e38f0c` |
+| **上游提交数** | 7 个 |
+| **备份分支** | `backup/before-upstream-merge-20260120` |
+| **冲突文件** | `frontend/package-lock.json` (使用上游版本) |
+
+**上游新增功能**:
+- 账户视图分页（100+账户性能优化）
+- 账户操作乐观更新和直接内存修改
+- Vue Router 401 重定向修复
+- 健康检查端点返回401问题修复
+- 默认 duckmail 域名更新为 duck.com
+
+**本地新增功能**:
+- 添加 `asyncio.CancelledError` 捕获，记录客户端断开连接日志（用户取消、超时、网络中断）
+- 修改位置：`main.py` 的 `stream_chat_generator` 和 `response_wrapper` 函数
+
 ### 2026-01-18 重构
 
 | 项目 | 内容 |
