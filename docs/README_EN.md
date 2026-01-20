@@ -14,8 +14,6 @@
   </a>
 </p>
 
-<p align="center"><em>Note: HF Spaces deployment does not support auto registration/refresh (requires Chrome browser), please add accounts manually</em></p>
-
 <p align="center"><em>💡 Tip: Remote environments (Hugging Face/Linux) and local environments can share the same database for automatic account data synchronization</em></p>
 
 <p align="center">Convert Gemini Business to OpenAI-compatible API with multi-account load balancing, image generation, multimodal capabilities, and built-in admin panel.</p>

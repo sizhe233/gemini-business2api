@@ -586,31 +586,23 @@ def update_account_disabled_status(
     session_cache_ttl_seconds: int,
     global_stats: dict
 ) -> MultiAccountManager:
-    """更新账户的禁用状态"""
-    accounts_data = load_accounts_from_source()
+    """更新账户的禁用状态（优化版：直接修改内存）"""
+    # 直接修改内存中的账户状态
+    if account_id not in multi_account_mgr.accounts:
+        raise ValueError(f"账户 {account_id} 不存在")
 
-    # 查找并更新账户
-    found = False
+    account_mgr = multi_account_mgr.accounts[account_id]
+    account_mgr.config.disabled = disabled
+
+    # 保存到文件
+    accounts_data = load_accounts_from_source()
     for i, acc in enumerate(accounts_data, 1):
         if get_account_id(acc, i) == account_id:
             acc["disabled"] = disabled
-            found = True
             break
 
-    if not found:
-        raise ValueError(f"账户 {account_id} 不存在")
-
     save_accounts_to_file(accounts_data)
-    new_mgr = reload_accounts(
-        multi_account_mgr,
-        http_client,
-        user_agent,
-        account_failure_threshold,
-        rate_limit_cooldown_seconds,
-        session_cache_ttl_seconds,
-        global_stats
-    )
 
     status_text = "已禁用" if disabled else "已启用"
     logger.info(f"[CONFIG] 账户 {account_id} {status_text}")
-    return new_mgr
+    return multi_account_mgr

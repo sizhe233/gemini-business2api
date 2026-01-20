@@ -15,8 +15,6 @@
   </a>
 </p>
 
-<p align="center"><em>注意：HF Spaces 部署不支持自动注册/刷新功能（需 Chrome 浏览器），请手动添加账号</em></p>
-
 <p align="center"><em>💡 提示：远程环境(Hugging Face/Linux)和本地环境可共用同一数据库，账户数据将自动保持同步</em></p>
 
 <p align="center">将 Gemini Business 转换为 OpenAI 兼容接口，支持多账号负载均衡、图像生成、多模态能力与内置管理面板。</p>

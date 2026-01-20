@@ -23,10 +23,15 @@ apiClient.interceptors.response.use(
   (response) => {
     return response.data
   },
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     // 统一错误处理
     if (error.response?.status === 401) {
-      window.location.hash = '#/login'
+      const { useAuthStore } = await import('@/stores/auth')
+      const authStore = useAuthStore()
+      authStore.isLoggedIn = false
+
+      const router = await import('@/router')
+      router.default.push('/login')
     }
 
     const errorMessage = error.response?.data

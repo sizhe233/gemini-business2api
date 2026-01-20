@@ -20,33 +20,41 @@ export const useAccountsStore = defineStore('accounts', () => {
   }
 
   async function deleteAccount(accountId: string) {
+    accounts.value = accounts.value.filter(acc => acc.id !== accountId)
     await accountsApi.delete(accountId)
-    await loadAccounts()
   }
 
   async function disableAccount(accountId: string) {
+    const account = accounts.value.find(acc => acc.id === accountId)
+    if (account) account.disabled = true
     await accountsApi.disable(accountId)
-    await loadAccounts()
   }
 
   async function enableAccount(accountId: string) {
+    const account = accounts.value.find(acc => acc.id === accountId)
+    if (account) account.disabled = false
     await accountsApi.enable(accountId)
-    await loadAccounts()
   }
 
   async function bulkEnable(accountIds: string[]) {
+    accountIds.forEach(id => {
+      const account = accounts.value.find(acc => acc.id === id)
+      if (account) account.disabled = false
+    })
     await Promise.all(accountIds.map(accountId => accountsApi.enable(accountId)))
-    await loadAccounts()
   }
 
   async function bulkDisable(accountIds: string[]) {
+    accountIds.forEach(id => {
+      const account = accounts.value.find(acc => acc.id === id)
+      if (account) account.disabled = true
+    })
     await Promise.all(accountIds.map(accountId => accountsApi.disable(accountId)))
-    await loadAccounts()
   }
 
   async function bulkDelete(accountIds: string[]) {
+    accounts.value = accounts.value.filter(acc => !accountIds.includes(acc.id))
     await Promise.all(accountIds.map(accountId => accountsApi.delete(accountId)))
-    await loadAccounts()
   }
 
   async function updateConfig(newAccounts: AccountConfigItem[]) {

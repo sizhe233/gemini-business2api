@@ -167,7 +167,7 @@
 
       <div v-if="viewMode === 'card'" class="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         <div
-          v-for="account in filteredAccounts"
+          v-for="account in paginatedAccounts"
           :key="account.id"
           class="rounded-2xl border border-border bg-card p-4"
           :class="rowClass(account)"
@@ -293,7 +293,7 @@
               </td>
             </tr>
             <tr
-              v-for="account in filteredAccounts"
+              v-for="account in paginatedAccounts"
               :key="account.id"
               class="border-t border-border"
               :class="rowClass(account)"
@@ -375,6 +375,30 @@
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- Pagination Controls -->
+      <div v-if="filteredAccounts.length > pageSize" class="mt-6 flex items-center justify-between">
+        <div class="text-sm text-muted-foreground">
+          显示 {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, filteredAccounts.length) }} / 共 {{ filteredAccounts.length }} 个账户
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            class="rounded-full border border-border px-4 py-2 text-sm transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="currentPage === 1"
+            @click="currentPage--"
+          >
+            上一页
+          </button>
+          <span class="text-sm text-muted-foreground">{{ currentPage }} / {{ totalPages }}</span>
+          <button
+            class="rounded-full border border-border px-4 py-2 text-sm transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="currentPage === totalPages"
+            @click="currentPage++"
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </section>
   </div>
@@ -766,6 +790,8 @@ const searchQuery = ref('')
 const statusFilter = ref('all')
 const selectedIds = ref<Set<string>>(new Set())
 const viewMode = ref<'table' | 'card'>('table')
+const currentPage = ref(1)
+const pageSize = ref(50)
 const isEditOpen = ref(false)
 const editError = ref('')
 const isConfigOpen = ref(false)
@@ -830,10 +856,22 @@ const filteredAccounts = computed(() => {
   })
 })
 
+const totalPages = computed(() => Math.ceil(filteredAccounts.value.length / pageSize.value))
+
+const paginatedAccounts = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredAccounts.value.slice(start, end)
+})
+
 const selectedCount = computed(() => selectedIds.value.size)
 const allSelected = computed(() =>
   filteredAccounts.value.length > 0 && filteredAccounts.value.every(account => selectedIds.value.has(account.id))
 )
+
+watch([searchQuery, statusFilter], () => {
+  currentPage.value = 1
+})
 
 const refreshAccounts = async () => {
   await accountsStore.loadAccounts()
