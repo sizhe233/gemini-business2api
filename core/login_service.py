@@ -63,12 +63,12 @@ class LoginService(BaseTaskService[LoginTask]):
             if self._current_task_id:
                 current = self._tasks.get(self._current_task_id)
                 if current and current.status == TaskStatus.RUNNING:
-                    raise ValueError("login task already running")
+                    raise ValueError("已有刷新任务正在运行中")
 
             task = LoginTask(id=str(uuid.uuid4()), account_ids=account_ids)
             self._tasks[task.id] = task
             self._current_task_id = task.id
-            self._append_log(task, "info", f"login task created ({len(account_ids)} accounts)")
+            self._append_log(task, "info", f"📝 创建刷新任务 (账号数量: {len(account_ids)})")
             asyncio.create_task(self._run_login_async(task))
             return task
 
@@ -76,10 +76,14 @@ class LoginService(BaseTaskService[LoginTask]):
         """异步执行登录任务"""
         task.status = TaskStatus.RUNNING
         loop = asyncio.get_running_loop()
-        self._append_log(task, "info", "login task started")
+        self._append_log(task, "info", f"🚀 刷新任务已启动 (共 {len(task.account_ids)} 个账号)")
 
-        for account_id in task.account_ids:
+        for idx, account_id in enumerate(task.account_ids, 1):
             try:
+                self._append_log(task, "info", f"📊 进度: {idx}/{len(task.account_ids)}")
+                self._append_log(task, "info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                self._append_log(task, "info", f"🔄 开始刷新账号: {account_id}")
+                self._append_log(task, "info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 result = await loop.run_in_executor(self._executor, self._refresh_one, account_id, task)
             except Exception as exc:
                 result = {"success": False, "email": account_id, "error": str(exc)}
@@ -88,25 +92,31 @@ class LoginService(BaseTaskService[LoginTask]):
 
             if result.get("success"):
                 task.success_count += 1
-                self._append_log(task, "info", f"refresh success: {account_id}")
+                self._append_log(task, "info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                self._append_log(task, "info", f"🎉 刷新成功: {account_id}")
+                self._append_log(task, "info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             else:
                 task.fail_count += 1
-                self._append_log(task, "error", f"refresh failed: {account_id} - {result.get('error')}")
+                error = result.get('error', '未知错误')
+                self._append_log(task, "error", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                self._append_log(task, "error", f"❌ 刷新失败: {account_id}")
+                self._append_log(task, "error", f"❌ 失败原因: {error}")
+                self._append_log(task, "error", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
         task.status = TaskStatus.SUCCESS if task.fail_count == 0 else TaskStatus.FAILED
         task.finished_at = time.time()
         self._current_task_id = None
-        self._append_log(task, "info", f"login task finished ({task.success_count}/{len(task.account_ids)})")
+        self._append_log(task, "info", f"🏁 刷新任务完成 (成功: {task.success_count}, 失败: {task.fail_count}, 总计: {len(task.account_ids)})")
 
     def _refresh_one(self, account_id: str, task: LoginTask) -> dict:
         """刷新单个账户"""
         accounts = load_accounts_from_source()
         account = next((acc for acc in accounts if acc.get("id") == account_id), None)
         if not account:
-            return {"success": False, "email": account_id, "error": "account not found"}
+            return {"success": False, "email": account_id, "error": "账号不存在"}
 
         if account.get("disabled"):
-            return {"success": False, "email": account_id, "error": "account disabled"}
+            return {"success": False, "email": account_id, "error": "账号已禁用"}
 
         # 获取邮件提供商
         mail_provider = (account.get("mail_provider") or "").lower()
@@ -124,10 +134,12 @@ class LoginService(BaseTaskService[LoginTask]):
 
         log_cb = lambda level, message: self._append_log(task, level, f"[{account_id}] {message}")
 
+        log_cb("info", f"📧 邮件提供商: {mail_provider}")
+
         # 创建邮件客户端
         if mail_provider == "microsoft":
             if not mail_client_id or not mail_refresh_token:
-                return {"success": False, "email": account_id, "error": "microsoft oauth missing"}
+                return {"success": False, "email": account_id, "error": "Microsoft OAuth 配置缺失"}
             mail_address = account.get("mail_address") or account_id
             client = MicrosoftMailClient(
                 client_id=mail_client_id,
@@ -139,7 +151,7 @@ class LoginService(BaseTaskService[LoginTask]):
             client.set_credentials(mail_address)
         elif mail_provider == "duckmail":
             if not mail_password:
-                return {"success": False, "email": account_id, "error": "mail password missing"}
+                return {"success": False, "email": account_id, "error": "邮箱密码缺失"}
             # DuckMail: account_id 就是邮箱地址
             client = DuckMailClient(
                 base_url=config.basic.duckmail_base_url,
@@ -150,20 +162,13 @@ class LoginService(BaseTaskService[LoginTask]):
             )
             client.set_credentials(account_id, mail_password)
         else:
-            return {"success": False, "email": account_id, "error": f"unsupported mail provider: {mail_provider}"}
+            return {"success": False, "email": account_id, "error": f"不支持的邮件提供商: {mail_provider}"}
 
         # 根据配置选择浏览器引擎
         browser_engine = (config.basic.browser_engine or "dp").lower()
         headless = config.basic.browser_headless
 
-        # Linux 环境强制使用 DP 无头模式（无图形界面无法运行有头模式）
-        import sys
-        is_linux = sys.platform.startswith("linux")
-        if is_linux:
-            if browser_engine != "dp" or not headless:
-                log_cb("warning", "Linux environment: forcing DP engine with headless mode")
-                browser_engine = "dp"
-                headless = True
+        log_cb("info", f"🌐 启动浏览器 (引擎={browser_engine}, 无头模式={headless})...")
 
         if browser_engine == "dp":
             # DrissionPage 引擎：支持有头和无头模式
@@ -174,7 +179,10 @@ class LoginService(BaseTaskService[LoginTask]):
                 log_callback=log_cb,
             )
         else:
-            # undetected-chromedriver 引擎：仅有头模式可用
+            # undetected-chromedriver 引擎：无头模式反检测能力弱，强制使用有头模式
+            if headless:
+                log_cb("warning", "⚠️ UC 引擎无头模式反检测能力弱，强制使用有头模式")
+                headless = False
             automation = GeminiAutomationUC(
                 user_agent=self.user_agent,
                 proxy=config.basic.proxy,
@@ -182,11 +190,17 @@ class LoginService(BaseTaskService[LoginTask]):
                 log_callback=log_cb,
             )
         try:
+            log_cb("info", "🔐 执行 Gemini 自动登录...")
             result = automation.login_and_extract(account_id, client)
         except Exception as exc:
+            log_cb("error", f"❌ 自动登录异常: {exc}")
             return {"success": False, "email": account_id, "error": str(exc)}
         if not result.get("success"):
-            return {"success": False, "email": account_id, "error": result.get("error", "automation failed")}
+            error = result.get("error", "自动化流程失败")
+            log_cb("error", f"❌ 自动登录失败: {error}")
+            return {"success": False, "email": account_id, "error": error}
+
+        log_cb("info", "✅ Gemini 登录成功，正在保存配置...")
 
         # 更新账户配置
         config_data = result["config"]
@@ -205,6 +219,7 @@ class LoginService(BaseTaskService[LoginTask]):
                 break
 
         self._apply_accounts_update(accounts)
+        log_cb("info", "✅ 配置已保存到数据库")
         return {"success": True, "email": account_id, "config": config_data}
 
 

@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import os
+import random
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -106,7 +108,8 @@ class AccountManager:
         self.last_error_time = 0.0
         self.last_429_time = 0.0  # 429错误专属时间戳
         self.error_count = 0
-        self.conversation_count = 0  # 累计对话次数
+        self.conversation_count = 0  # 累计对话次数（用于统计展示）
+        self.session_usage_count = 0  # 本次启动后使用次数（用于均衡轮询）
 
     async def get_jwt(self, request_id: str = "") -> str:
         """获取 JWT token (带错误处理)"""
@@ -191,7 +194,9 @@ class MultiAccountManager:
         self.account_list: List[str] = []  # 账户ID列表 (用于轮询)
         self.current_index = 0
         self._cache_lock = asyncio.Lock()  # 缓存操作专用锁
-        self._index_lock = asyncio.Lock()  # 索引更新专用锁
+        self._counter_lock = threading.Lock()  # 轮询计数器锁
+        self._request_counter = 0  # 请求计数器
+        self._last_account_count = 0  # 可用账户数量
         # 全局会话缓存：{conv_key: {"account_id": str, "session_id": str, "updated_at": float}}
         self.global_session_cache: Dict[str, dict] = {}
         self.cache_max_size = 1000  # 最大缓存条目数
@@ -289,10 +294,10 @@ class MultiAccountManager:
         logger.info(f"[MULTI] [ACCOUNT] 添加账户: {config.account_id}")
 
     async def get_account(self, account_id: Optional[str] = None, request_id: str = "") -> AccountManager:
-        """获取账户 (智能选择或指定) - 优先选择健康账户，提升响应速度"""
+        """获取账户 - Round-Robin轮询"""
         req_tag = f"[req_{request_id}] " if request_id else ""
 
-        # 如果指定了账户ID（无需锁）
+        # 指定账户ID时直接返回
         if account_id:
             if account_id not in self.accounts:
                 raise HTTPException(404, f"Account {account_id} not found")
@@ -301,39 +306,31 @@ class MultiAccountManager:
                 raise HTTPException(503, f"Account {account_id} temporarily unavailable")
             return account
 
-        # 智能选择可用账户（优先健康账户，提升响应速度）
-        available_accounts = []
-        for acc_id in self.account_list:
-            account = self.accounts[acc_id]
-            # 检查账户是否可用（会自动恢复429冷却期后的账户）
-            if (account.should_retry() and
-                not account.config.is_expired() and
-                not account.config.disabled):
-                # 计算账户健康度（error_count越低越健康）
-                health_score = -account.error_count  # 负数，越大越健康
-                available_accounts.append((acc_id, health_score))
+        # 筛选可用账户
+        available_accounts = [
+            acc for acc in self.accounts.values()
+            if (acc.should_retry() and
+                not acc.config.is_expired() and
+                not acc.config.disabled)
+        ]
 
         if not available_accounts:
             raise HTTPException(503, "No available accounts")
 
-        # 按健康度排序（优先选择error_count最低的账户）
-        available_accounts.sort(key=lambda x: x[1], reverse=True)
+        # 轮询选择
+        with self._counter_lock:
+            if len(available_accounts) != self._last_account_count:
+                self._request_counter = random.randint(0, 999999)
+                self._last_account_count = len(available_accounts)
+            index = self._request_counter % len(available_accounts)
+            self._request_counter += 1
 
-        # 只在更新索引时加锁（最小化锁持有时间）
-        async with self._index_lock:
-            if not hasattr(self, '_available_index'):
-                self._available_index = 0
+        selected = available_accounts[index]
+        selected.session_usage_count += 1
 
-            # 在健康账户中轮询（只在前50%健康账户中选择）
-            healthy_count = max(1, len(available_accounts) // 2)
-            healthy_accounts = [acc_id for acc_id, _ in available_accounts[:healthy_count]]
-
-            account_id = healthy_accounts[self._available_index % len(healthy_accounts)]
-            self._available_index = (self._available_index + 1) % len(healthy_accounts)
-
-        account = self.accounts[account_id]
-        logger.info(f"[MULTI] [ACCOUNT] {req_tag}选择账户: {account_id} (健康度: {account.error_count}错误)")
-        return account
+        logger.info(f"[MULTI] [ACCOUNT] {req_tag}选择账户: {selected.config.account_id} "
+                    f"(索引: {index}/{len(available_accounts)}, 使用: {selected.session_usage_count})")
+        return selected
 
 
 # ---------- 配置文件管理 ----------
@@ -354,7 +351,7 @@ def _load_from_file() -> list:
                 return json.load(f)
         except Exception as e:
             logger.warning(f"[CONFIG] 文件加载失败: {str(e)}")
-    return None
+    return []
 
 
 def save_accounts_to_file(accounts_data: list):
@@ -480,15 +477,11 @@ def reload_accounts(
     session_cache_ttl_seconds: int,
     global_stats: dict
 ) -> MultiAccountManager:
-    """重新加载账户配置（保留现有账户的运行时状态）"""
-    # 保存现有账户的运行时状态
-    old_states = {}
+    """重新加载账户配置（重置所有错误状态，仅保留统计数据）"""
+    # 仅保存统计数据（conversation_count）
+    old_stats = {}
     for account_id, account_mgr in multi_account_mgr.accounts.items():
-        old_states[account_id] = {
-            "is_available": account_mgr.is_available,
-            "last_error_time": account_mgr.last_error_time,
-            "last_429_time": account_mgr.last_429_time,
-            "error_count": account_mgr.error_count,
+        old_stats[account_id] = {
             "conversation_count": account_mgr.conversation_count
         }
 
@@ -503,18 +496,20 @@ def reload_accounts(
         global_stats
     )
 
-    # 恢复现有账户的运行时状态
-    for account_id, state in old_states.items():
+    # 仅恢复统计数据，错误状态全部重置
+    for account_id, stats in old_stats.items():
         if account_id in new_mgr.accounts:
             account_mgr = new_mgr.accounts[account_id]
-            account_mgr.is_available = state["is_available"]
-            account_mgr.last_error_time = state["last_error_time"]
-            account_mgr.last_429_time = state["last_429_time"]
-            account_mgr.error_count = state["error_count"]
-            account_mgr.conversation_count = state["conversation_count"]
-            logger.debug(f"[CONFIG] 账户 {account_id} 运行时状态已恢复")
+            account_mgr.conversation_count = stats["conversation_count"]
+            # 确保错误状态已重置（虽然load_multi_account_config已经初始化，但显式确认）
+            account_mgr.is_available = True
+            account_mgr.last_error_time = 0.0
+            account_mgr.last_429_time = 0.0
+            account_mgr.error_count = 0
+            account_mgr.session_usage_count = 0
+            logger.debug(f"[CONFIG] 账户 {account_id} 已刷新，错误状态已重置")
 
-    logger.info(f"[CONFIG] 配置已重载，当前账户数: {len(new_mgr.accounts)}")
+    logger.info(f"[CONFIG] 配置已重载，当前账户数: {len(new_mgr.accounts)}，所有错误状态已重置")
     return new_mgr
 
 
@@ -606,3 +601,39 @@ def update_account_disabled_status(
     status_text = "已禁用" if disabled else "已启用"
     logger.info(f"[CONFIG] 账户 {account_id} {status_text}")
     return multi_account_mgr
+
+
+def bulk_update_account_disabled_status(
+    account_ids: list[str],
+    disabled: bool,
+    multi_account_mgr: MultiAccountManager,
+) -> tuple[int, list[str]]:
+    """批量更新账户禁用状态，单次最多50个，仅读写一次文件"""
+    success_count = 0
+    errors = []
+
+    # 1. 更新内存状态
+    for account_id in account_ids:
+        if account_id not in multi_account_mgr.accounts:
+            errors.append(f"{account_id}: 账户不存在")
+            continue
+        account_mgr = multi_account_mgr.accounts[account_id]
+        account_mgr.config.disabled = disabled
+        success_count += 1
+
+    # 2. 只读取一次文件
+    accounts_data = load_accounts_from_source()
+    account_id_set = set(account_ids)
+
+    # 3. 批量更新
+    for i, acc in enumerate(accounts_data, 1):
+        acc_id = get_account_id(acc, i)
+        if acc_id in account_id_set:
+            acc["disabled"] = disabled
+
+    # 4. 只保存一次
+    save_accounts_to_file(accounts_data)
+
+    status_text = "已禁用" if disabled else "已启用"
+    logger.info(f"[CONFIG] 批量{status_text} {success_count}/{len(account_ids)} 个账户")
+    return success_count, errors

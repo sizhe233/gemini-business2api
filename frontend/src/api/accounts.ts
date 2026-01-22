@@ -32,6 +32,20 @@ export const accountsApi = {
   enable: (accountId: string) =>
     apiClient.put(`/admin/accounts/${accountId}/enable`),
 
+  // 批量启用账户（最多50个）
+  bulkEnable: (accountIds: string[]) =>
+    apiClient.put<never, { status: string; success_count: number; errors: string[] }>(
+      '/admin/accounts/bulk-enable',
+      accountIds
+    ),
+
+  // 批量禁用账户（最多50个）
+  bulkDisable: (accountIds: string[]) =>
+    apiClient.put<never, { status: string; success_count: number; errors: string[] }>(
+      '/admin/accounts/bulk-disable',
+      accountIds
+    ),
+
   startRegister: (count?: number, domain?: string) =>
     apiClient.post<never, RegisterTask>('/admin/register/start', { count, domain }),
 

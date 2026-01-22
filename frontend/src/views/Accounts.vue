@@ -1,5 +1,21 @@
 ﻿<template>
-  <div class="space-y-8">
+  <div class="space-y-8 relative">
+    <!-- 全局加载遮罩 -->
+    <Teleport to="body">
+      <div
+        v-if="isBulkOperating"
+        class="fixed inset-0 z-[200] flex items-center justify-center bg-background/80 backdrop-blur-sm"
+      >
+        <div class="flex flex-col items-center gap-4 rounded-2xl border border-border bg-card p-8 shadow-lg">
+          <svg class="h-10 w-10 animate-spin text-primary" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p class="text-sm font-medium text-foreground">批量操作处理中...</p>
+        </div>
+      </div>
+    </Teleport>
+
     <section class="rounded-3xl border border-border bg-card p-6">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="grid w-full grid-cols-2 gap-3 sm:flex sm:w-auto sm:items-center">
@@ -131,24 +147,38 @@
             <button
               type="button"
               class="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors"
-              :class="!selectedCount
+              :class="!selectedCount || isBulkOperating
                 ? 'cursor-not-allowed text-muted-foreground'
                 : 'text-foreground hover:bg-accent'"
-              :disabled="!selectedCount"
+              :disabled="!selectedCount || isBulkOperating"
               @click="handleBulkEnable(); closeMoreActions()"
             >
-              批量启用
+              <span v-if="isBulkOperating" class="flex items-center gap-2">
+                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                处理中...
+              </span>
+              <span v-else>批量启用</span>
             </button>
             <button
               type="button"
               class="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors"
-              :class="!selectedCount
+              :class="!selectedCount || isBulkOperating
                 ? 'cursor-not-allowed text-muted-foreground'
                 : 'text-foreground hover:bg-accent'"
-              :disabled="!selectedCount"
+              :disabled="!selectedCount || isBulkOperating"
               @click="handleBulkDisable(); closeMoreActions()"
             >
-              批量禁用
+              <span v-if="isBulkOperating" class="flex items-center gap-2">
+                <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                处理中...
+              </span>
+              <span v-else>批量禁用</span>
             </button>
             <button
               type="button"
@@ -820,6 +850,7 @@ const loginTask = ref<LoginTask | null>(null)
 const taskLogsRef = ref<HTMLDivElement | null>(null)
 const isRegistering = ref(false)
 const isRefreshing = ref(false)
+const isBulkOperating = ref(false)
 const automationError = ref('')
 const REGISTER_TASK_CACHE_KEY = 'accounts-register-task-cache'
 const LOGIN_TASK_CACHE_KEY = 'accounts-login-task-cache'
@@ -1571,12 +1602,15 @@ const saveEdit = async () => {
 }
 
 const handleBulkEnable = async () => {
+  isBulkOperating.value = true
   try {
     await accountsStore.bulkEnable(Array.from(selectedIds.value))
     toast.success('批量启用成功')
     selectedIds.value = new Set()
   } catch (error: any) {
     toast.error(error.message || '批量启用失败')
+  } finally {
+    isBulkOperating.value = false
   }
 }
 
@@ -1586,12 +1620,15 @@ const handleBulkDisable = async () => {
     message: '确定要批量禁用选中的账号吗？',
   })
   if (!confirmed) return
+  isBulkOperating.value = true
   try {
     await accountsStore.bulkDisable(Array.from(selectedIds.value))
     toast.success('批量禁用成功')
     selectedIds.value = new Set()
   } catch (error: any) {
     toast.error(error.message || '批量禁用失败')
+  } finally {
+    isBulkOperating.value = false
   }
 }
 

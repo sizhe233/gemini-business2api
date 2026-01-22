@@ -185,6 +185,24 @@ app.include_router(external_router)
 
 ## 四、合并历史记录
 
+### 2026-01-22 合并上游 (21 commits)
+
+| 项目 | 内容 |
+|------|------|
+| **上游提交数** | 21 个 |
+| **备份分支** | `backup/before-upstream-merge-20260122` |
+| **冲突文件** | `README.md`, `docs/README_EN.md`, `core/account.py`, `frontend/src/stores/accounts.ts` |
+
+**上游新增/变更功能**:
+- Docker: 支持 Xvfb 有头模式运行浏览器
+- 账号管理: 批量启用/禁用端点 + 前端批量操作
+- 负载均衡: 账号选择从加权随机调整为轮询策略
+- 429 冷却: 冷却时间范围/策略调整
+
+**本地保留定制**:
+- External API: `/external/*` 路由与 `core/external_api.py` 模块保持不变
+- 鉴权: `core/auth.py` 保留 `verify_admin_key()` (Bearer ADMIN_KEY)
+
 ### 2026-01-20 合并上游 + 客户端断开日志
 
 | 项目 | 内容 |

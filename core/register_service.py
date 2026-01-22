@@ -58,11 +58,11 @@ class RegisterService(BaseTaskService[RegisterTask]):
         """启动注册任务"""
         async with self._lock:
             if os.environ.get("ACCOUNTS_CONFIG"):
-                raise ValueError("ACCOUNTS_CONFIG is set; register is disabled")
+                raise ValueError("已设置 ACCOUNTS_CONFIG 环境变量，注册功能已禁用")
             if self._current_task_id:
                 current = self._tasks.get(self._current_task_id)
                 if current and current.status == TaskStatus.RUNNING:
-                    raise ValueError("register task already running")
+                    raise ValueError("已有注册任务正在运行中")
 
             domain_value = (domain or "").strip()
             if not domain_value:
@@ -73,7 +73,7 @@ class RegisterService(BaseTaskService[RegisterTask]):
             task = RegisterTask(id=str(uuid.uuid4()), count=register_count)
             self._tasks[task.id] = task
             self._current_task_id = task.id
-            self._append_log(task, "info", f"register task created (count={register_count})")
+            self._append_log(task, "info", f"📝 创建注册任务 (数量={register_count})")
             asyncio.create_task(self._run_register_async(task, domain_value))
             return task
 
@@ -81,10 +81,11 @@ class RegisterService(BaseTaskService[RegisterTask]):
         """异步执行注册任务"""
         task.status = TaskStatus.RUNNING
         loop = asyncio.get_running_loop()
-        self._append_log(task, "info", "register task started")
+        self._append_log(task, "info", f"🚀 注册任务已启动 (共 {task.count} 个账号)")
 
-        for _ in range(task.count):
+        for idx in range(task.count):
             try:
+                self._append_log(task, "info", f"📊 进度: {idx + 1}/{task.count}")
                 result = await loop.run_in_executor(self._executor, self._register_one, domain, task)
             except Exception as exc:
                 result = {"success": False, "error": str(exc)}
@@ -93,19 +94,26 @@ class RegisterService(BaseTaskService[RegisterTask]):
 
             if result.get("success"):
                 task.success_count += 1
-                self._append_log(task, "info", f"register success: {result.get('email')}")
+                email = result.get('email', '未知')
+                self._append_log(task, "info", f"✅ 注册成功: {email}")
             else:
                 task.fail_count += 1
-                self._append_log(task, "error", f"register failed: {result.get('error')}")
+                error = result.get('error', '未知错误')
+                self._append_log(task, "error", f"❌ 注册失败: {error}")
 
         task.status = TaskStatus.SUCCESS if task.fail_count == 0 else TaskStatus.FAILED
         task.finished_at = time.time()
         self._current_task_id = None
-        self._append_log(task, "info", f"register task finished ({task.success_count}/{task.count})")
+        self._append_log(task, "info", f"🏁 注册任务完成 (成功: {task.success_count}, 失败: {task.fail_count}, 总计: {task.count})")
 
     def _register_one(self, domain: Optional[str], task: RegisterTask) -> dict:
         """注册单个账户"""
         log_cb = lambda level, message: self._append_log(task, level, message)
+
+        log_cb("info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        log_cb("info", "🆕 开始注册新账户")
+        log_cb("info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
         client = DuckMailClient(
             base_url=config.basic.duckmail_base_url,
             proxy=config.basic.proxy,
@@ -113,21 +121,19 @@ class RegisterService(BaseTaskService[RegisterTask]):
             api_key=config.basic.duckmail_api_key,
             log_callback=log_cb,
         )
+
+        log_cb("info", "📧 步骤 1/3: 注册 DuckMail 邮箱...")
         if not client.register_account(domain=domain):
-            return {"success": False, "error": "duckmail register failed"}
+            log_cb("error", "❌ DuckMail 邮箱注册失败")
+            return {"success": False, "error": "DuckMail 注册失败"}
+
+        log_cb("info", f"✅ DuckMail 邮箱注册成功: {client.email}")
 
         # 根据配置选择浏览器引擎
         browser_engine = (config.basic.browser_engine or "dp").lower()
         headless = config.basic.browser_headless
 
-        # Linux 环境强制使用 DP 无头模式（无图形界面无法运行有头模式）
-        import sys
-        is_linux = sys.platform.startswith("linux")
-        if is_linux:
-            if browser_engine != "dp" or not headless:
-                log_cb("warning", "Linux environment: forcing DP engine with headless mode")
-                browser_engine = "dp"
-                headless = True
+        log_cb("info", f"🌐 步骤 2/3: 启动浏览器 (引擎={browser_engine}, 无头模式={headless})...")
 
         if browser_engine == "dp":
             # DrissionPage 引擎：支持有头和无头模式
@@ -138,7 +144,10 @@ class RegisterService(BaseTaskService[RegisterTask]):
                 log_callback=log_cb,
             )
         else:
-            # undetected-chromedriver 引擎：仅有头模式可用
+            # undetected-chromedriver 引擎：无头模式反检测能力弱，强制使用有头模式
+            if headless:
+                log_cb("warning", "⚠️ UC 引擎无头模式反检测能力弱，强制使用有头模式")
+                headless = False
             automation = GeminiAutomationUC(
                 user_agent=self.user_agent,
                 proxy=config.basic.proxy,
@@ -147,11 +156,18 @@ class RegisterService(BaseTaskService[RegisterTask]):
             )
 
         try:
+            log_cb("info", "🔐 步骤 3/3: 执行 Gemini 自动登录...")
             result = automation.login_and_extract(client.email, client)
         except Exception as exc:
+            log_cb("error", f"❌ 自动登录异常: {exc}")
             return {"success": False, "error": str(exc)}
+
         if not result.get("success"):
-            return {"success": False, "error": result.get("error", "automation failed")}
+            error = result.get("error", "自动化流程失败")
+            log_cb("error", f"❌ 自动登录失败: {error}")
+            return {"success": False, "error": error}
+
+        log_cb("info", "✅ Gemini 登录成功，正在保存配置...")
 
         config_data = result["config"]
         config_data["mail_provider"] = "duckmail"
@@ -169,5 +185,10 @@ class RegisterService(BaseTaskService[RegisterTask]):
             accounts_data.append(config_data)
 
         self._apply_accounts_update(accounts_data)
+
+        log_cb("info", "✅ 配置已保存到数据库")
+        log_cb("info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        log_cb("info", f"🎉 账户注册完成: {client.email}")
+        log_cb("info", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
         return {"success": True, "email": client.email, "config": config_data}

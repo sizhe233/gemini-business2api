@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="../docs/logo.svg" width="120" alt="Gemini Business2API logo" />
 </p>
 <h1 align="center">Gemini Business2API</h1>
@@ -67,7 +67,41 @@
 
 ## 🚀 Quick Start
 
-### Method 1: Using Setup Script (Recommended)
+### Method 1: Zeabur Deployment (Recommended, Auto-Update Supported)
+
+Thanks to [PR #37](https://github.com/Dreamy-rain/gemini-business2api/pull/37) for Linux and Docker deployment optimizations.
+
+#### Step 1: Fork the Repository
+
+Click the **Fork** button in the top-right corner to copy this project to your GitHub account.
+
+#### Step 2: Deploy to Zeabur
+
+1. Log in to [Zeabur](https://zeabur.com) and create a new project
+2. Click **Create Project** → **Shared Cluster / Silicon Valley, United States** → **Create Project** → **Deploy New Service** → **Connect GitHub** (authorize if prompted) → **Select your forked repository** → **Deploy**
+3. Click on the service card → **Variables** tab, and add the following environment variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ADMIN_KEY` | ✅ | Admin panel login key (set your own) |
+| `DATABASE_URL` | Recommended | PostgreSQL connection string (see "Database Persistence" below) |
+
+> 💡 **Strongly recommended to configure DATABASE_URL**, otherwise data will be lost when Zeabur restarts. Get a free database at [neon.tech](https://neon.tech)
+
+4. Click **Redeploy** to apply the environment variables
+5. Wait for the build to complete (~1-2 minutes)
+
+#### How to Update?
+
+When this project is updated:
+
+1. Go to your forked GitHub repository
+2. Click **Sync fork** → **Update branch**
+3. Zeabur will automatically detect changes and redeploy
+
+---
+
+### Method 2: Setup Script (Local Deployment)
 
 **Linux/macOS:**
 ```bash
@@ -118,7 +152,7 @@ pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 
 **Update Project:** Simply run the same command, the script will automatically update all components (code, dependencies, frontend)
 
-### Method 2: Manual Deployment
+### Method 3: Manual Deployment
 
 ```bash
 git clone https://github.com/Dreamy-rain/gemini-business2api.git
@@ -147,7 +181,7 @@ python main.py
 pm2 start main.py --name gemini-api --interpreter ./.venv/bin/python3
 ```
 
-### Method 3: Docker Compose (Recommended for Production)
+### Method 4: Docker Compose (Recommended for Production)
 
 **Supports ARM64 and AMD64 architectures**
 
@@ -173,19 +207,19 @@ docker-compose pull && docker-compose up -d
 Thanks to [PR #9](https://github.com/Dreamy-rain/gemini-business2api/pull/9) for optimizing the Dockerfile build
 
 
-### Optional: Database Persistence (Local / HF Spaces)
+### Database Persistence (Recommended)
 
-- Recommended on HF Spaces (free tier) to avoid data loss after restart
+Configure a PostgreSQL database to persist accounts, settings, and statistics across restarts.
+
 - Set `DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require`
-  - Local: put it in `.env`
-  - HF Spaces: Settings -> Variables/Secrets
-- Accounts/settings/stats are stored in the database
-- Keep the connection string secret (it includes credentials)
+  - Local deployment: Add to `.env` file
+  - Zeabur deployment: Add in the Variables tab
+- Keep the connection string secret (contains credentials)
 
 ```
-#  Get DATABASE_URL from Neon (recommended)
-1. Open https://neon.tech and sign in
-2. Create project -> choose a region
+# Get DATABASE_URL from Neon (Free)
+1. Go to https://neon.tech and sign in
+2. Create project -> Select a region
 3. Open the project page, copy the Connection string
 4. Example:
    postgresql://user:password@ep-xxx.neon.tech/dbname?sslmode=require

@@ -64,7 +64,8 @@ from core.account import (
     reload_accounts as _reload_accounts,
     update_accounts_config as _update_accounts_config,
     delete_account as _delete_account,
-    update_account_disabled_status as _update_account_disabled_status
+    update_account_disabled_status as _update_account_disabled_status,
+    bulk_update_account_disabled_status as _bulk_update_account_disabled_status
 )
 
 # 导入 Uptime 追踪器
@@ -966,7 +967,8 @@ async def admin_get_accounts(request: Request):
             "disabled": config.disabled,
             "cooldown_seconds": cooldown_seconds,
             "cooldown_reason": cooldown_reason,
-            "conversation_count": account_manager.conversation_count
+            "conversation_count": account_manager.conversation_count,
+            "session_usage_count": account_manager.session_usage_count
         })
 
     return {"total": len(accounts_info), "accounts": accounts_info}
@@ -1006,10 +1008,6 @@ def _get_admin_key():
 
 def _get_multi_account_mgr():
     return multi_account_mgr
-
-def _set_multi_account_mgr(new_mgr):
-    global multi_account_mgr
-    multi_account_mgr = new_mgr
 
 def _get_update_config_params():
     return (
@@ -1154,6 +1152,33 @@ async def admin_enable_account(request: Request, account_id: str):
     except Exception as e:
         logger.error(f"[CONFIG] 启用账户失败: {str(e)}")
         raise HTTPException(500, f"启用失败: {str(e)}")
+
+@app.put("/admin/accounts/bulk-enable")
+@require_login()
+async def admin_bulk_enable_accounts(request: Request, account_ids: list[str]):
+    """批量启用账户，单次最多50个"""
+    global multi_account_mgr
+    success_count, errors = _bulk_update_account_disabled_status(
+        account_ids, False, multi_account_mgr
+    )
+    # 重置运行时错误状态
+    for account_id in account_ids:
+        if account_id in multi_account_mgr.accounts:
+            account_mgr = multi_account_mgr.accounts[account_id]
+            account_mgr.is_available = True
+            account_mgr.error_count = 0
+            account_mgr.last_429_time = 0.0
+    return {"status": "success", "success_count": success_count, "errors": errors}
+
+@app.put("/admin/accounts/bulk-disable")
+@require_login()
+async def admin_bulk_disable_accounts(request: Request, account_ids: list[str]):
+    """批量禁用账户，单次最多50个"""
+    global multi_account_mgr
+    success_count, errors = _bulk_update_account_disabled_status(
+        account_ids, True, multi_account_mgr
+    )
+    return {"status": "success", "success_count": success_count, "errors": errors}
 
 # ---------- Auth endpoints (API) ----------
 @app.get("/admin/settings")
@@ -1667,30 +1692,32 @@ async def chat_impl(
                 await finalize_result("error", 499, "Client disconnected")
                 raise
             except (httpx.HTTPError, ssl.SSLError, HTTPException) as e:
-                status_code = e.status_code if isinstance(e, HTTPException) else None
+                # 提取错误信息
+                is_http_exception = isinstance(e, HTTPException)
+                status_code = e.status_code if is_http_exception else None
                 error_detail = (
                     f"HTTP {e.status_code}: {e.detail}"
-                    if isinstance(e, HTTPException)
+                    if is_http_exception
                     else f"{type(e).__name__}: {str(e)[:200]}"
                 )
+
                 # 记录当前失败的账户
                 failed_accounts.add(account_manager.config.account_id)
 
                 # 记录账号池状态（请求失败）
-                status_code = e.status_code if isinstance(e, HTTPException) else None
-
                 uptime_tracker.record_request("account_pool", False, status_code=status_code)
 
-                # 检查是否为429错误（Rate Limit）
-                is_rate_limit = isinstance(e, HTTPException) and e.status_code == 429
-
-                # 429错误单独处理（不增加error_count，只设置冷却时间）
-                if is_rate_limit:
+                # 根据错误类型决定是否计入error_count
+                # 429限流：临时禁用，冷却后自动恢复
+                if is_http_exception and status_code == 429:
                     account_manager.last_429_time = time.time()
                     account_manager.is_available = False  # 临时禁用，冷却期后自动恢复
                     logger.warning(f"[ACCOUNT] [{account_manager.config.account_id}] [req_{request_id}] 遇到429限流，账户将休息{RATE_LIMIT_COOLDOWN_SECONDS}秒后自动恢复")
+                # 400参数错误：不计入error_count，客户端问题不应封禁账户
+                elif is_http_exception and status_code == 400:
+                    logger.warning(f"[ACCOUNT] [{account_manager.config.account_id}] [req_{request_id}] 参数错误(400)，不计入失败次数: {e.detail}")
+                # 其他错误：计入error_count
                 else:
-                    # 非429错误才增加失败计数
                     account_manager.last_error_time = time.time()
                     account_manager.error_count += 1
                     if account_manager.error_count >= ACCOUNT_FAILURE_THRESHOLD:
@@ -1701,16 +1728,17 @@ async def chat_impl(
 
                 # 详细记录错误信息
                 error_type = type(e).__name__
-                error_detail = str(e)
 
                 # 特殊处理HTTPException，提取状态码和详情
-                if isinstance(e, HTTPException):
-                    if is_rate_limit:
+                if is_http_exception:
+                    if status_code == 429:
                         logger.error(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] 遇到429限流错误，账户将休息{RATE_LIMIT_COOLDOWN_SECONDS}秒")
+                    elif status_code == 400:
+                        logger.error(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] HTTP 400参数错误（不计入失败次数）: {e.detail}")
                     else:
                         logger.error(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] HTTP错误 {e.status_code}: {e.detail}")
                 else:
-                    logger.error(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] {error_type}: {error_detail}")
+                    logger.error(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] {error_type}: {str(e)[:200]}")
 
                 # 检查是否还能继续重试
                 if retry_count <= max_retries:
@@ -2169,9 +2197,6 @@ async def get_public_logs(request: Request, limit: int = 100):
             "total": len(output_logs),
             "logs": output_logs
         }
-    except Exception as e:
-        logger.error(f"[LOG] 获取公开日志失败: {e}")
-        return {"total": 0, "logs": [], "error": str(e)}
     except Exception as e:
         logger.error(f"[LOG] 获取公开日志失败: {e}")
         return {"total": 0, "logs": [], "error": str(e)}
