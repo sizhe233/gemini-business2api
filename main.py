@@ -1333,10 +1333,10 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
 async def admin_get_logs(
     request: Request,
     limit: int = 300,
-    level: str = None,
-    search: str = None,
-    start_time: str = None,
-    end_time: str = None
+    level: Optional[str] = None,
+    search: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None
 ):
     with log_lock:
         logs = list(log_buffer)
@@ -1352,23 +1352,28 @@ async def admin_get_logs(
         if "收到请求" in log.get("message", ""):
             chat_count += 1
 
-    if level:
-        level = level.upper()
-        logs = [log for log in logs if log["level"] == level]
-    if search:
-        logs = [log for log in logs if search.lower() in log["message"].lower()]
-    if start_time:
-        logs = [log for log in logs if log["time"] >= start_time]
-    if end_time:
-        logs = [log for log in logs if log["time"] <= end_time]
+    level_filter = (level or "").upper()
+    search_filter = (search or "").lower()
+    start_time_filter = start_time or ""
+    end_time_filter = end_time or ""
 
-    limit = min(limit, log_buffer.maxlen)
+    if level_filter:
+        logs = [log for log in logs if log.get("level") == level_filter]
+    if search_filter:
+        logs = [log for log in logs if search_filter in log.get("message", "").lower()]
+    if start_time_filter:
+        logs = [log for log in logs if log.get("time", "") >= start_time_filter]
+    if end_time_filter:
+        logs = [log for log in logs if log.get("time", "") <= end_time_filter]
+
+    max_capacity = log_buffer.maxlen if isinstance(log_buffer.maxlen, int) else len(log_buffer)
+    limit = min(limit, max_capacity)
     filtered_logs = logs[-limit:]
 
     return {
         "total": len(filtered_logs),
         "limit": limit,
-        "filters": {"level": level, "search": search, "start_time": start_time, "end_time": end_time},
+        "filters": {"level": level_filter, "search": search_filter, "start_time": start_time_filter, "end_time": end_time_filter},
         "logs": filtered_logs,
         "stats": {
             "memory": {"total": len(log_buffer), "by_level": stats_by_level, "capacity": log_buffer.maxlen},
@@ -1379,8 +1384,8 @@ async def admin_get_logs(
 
 @app.delete("/admin/log")
 @require_login()
-async def admin_clear_logs(request: Request, confirm: str = None):
-    if confirm != "yes":
+async def admin_clear_logs(request: Request, confirm: Optional[str] = None):
+    if (confirm or "") != "yes":
         raise HTTPException(400, "需要 confirm=yes 参数确认清空操作")
     with log_lock:
         cleared_count = len(log_buffer)
@@ -1391,7 +1396,7 @@ async def admin_clear_logs(request: Request, confirm: str = None):
 # ---------- Auth endpoints (API) ----------
 
 @app.get("/v1/models")
-async def list_models(authorization: str = Header(None)):
+async def list_models(authorization: Optional[str] = Header(None)):
     data = []
     now = int(time.time())
     for m in MODEL_MAPPING.keys():
@@ -1399,7 +1404,7 @@ async def list_models(authorization: str = Header(None)):
     return {"object": "list", "data": data}
 
 @app.get("/v1/models/{model_id}")
-async def get_model(model_id: str, authorization: str = Header(None)):
+async def get_model(model_id: str, authorization: Optional[str] = Header(None)):
     return {"id": model_id, "object": "model"}
 
 # ---------- Auth endpoints (API) ----------
@@ -1410,20 +1415,31 @@ async def chat(
     request: Request,
     authorization: Optional[str] = Header(None)
 ):
+    request_id = str(uuid.uuid4())[:6]
+    request.state.request_id = request_id
+
+    client_host = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")
+    # 避免日志过长
+    user_agent = user_agent[:200]
+    stream_flag = getattr(req, "stream", None)
+    msg_count = len(req.messages) if getattr(req, "messages", None) else 0
+    logger.info(
+        f"[API] [req_{request_id}] /v1/chat/completions from={client_host} stream={stream_flag} messages={msg_count} ua={user_agent}"
+    )
+
     # API Key 验证
     verify_api_key(API_KEY, authorization)
     # ... (保留原有的chat逻辑)
-    return await chat_impl(req, request, authorization)
+    return await chat_impl(req, request, authorization, request_id)
 
 # chat实现函数
 async def chat_impl(
     req: ChatRequest,
     request: Request,
-    authorization: Optional[str]
+    authorization: Optional[str],
+    request_id: str,
 ):
-    # 生成请求ID（最优先，用于所有日志追踪）
-    request_id = str(uuid.uuid4())[:6]
-
     start_ts = time.time()
     request.state.first_response_time = None
     message_count = len(req.messages)
@@ -1512,52 +1528,69 @@ async def chat_impl(
     conv_key = get_conversation_key([m.model_dump() for m in req.messages], client_ip)
     session_lock = await multi_account_mgr.acquire_session_lock(conv_key)
 
+    account_manager: Optional[AccountManager] = None
+    google_session: Optional[str] = None
+    is_new_conversation = False
+
     # 4. 在锁的保护下检查缓存和处理Session（保证同一对话的请求串行化）
     async with session_lock:
-        cached_session = multi_account_mgr.global_session_cache.get(conv_key)
+        cached_session: Optional[Dict[str, Any]] = multi_account_mgr.global_session_cache.get(conv_key)
 
-        if cached_session:
+        if cached_session is not None:
             # 使用已绑定的账户
             account_id = cached_session["account_id"]
             account_manager = await multi_account_mgr.get_account(account_id, request_id)
-            google_session = cached_session["session_id"]
+            google_session_any = cached_session.get("session_id")
+            if not isinstance(google_session_any, str):
+                raise HTTPException(500, "Invalid cached session")
+            google_session = google_session_any
             is_new_conversation = False
             logger.info(f"[CHAT] [{account_id}] [req_{request_id}] 继续会话: {google_session[-12:]}")
         else:
             # 新对话：轮询选择可用账户，失败时尝试其他账户
-            max_account_tries = min(MAX_NEW_SESSION_TRIES, len(multi_account_mgr.accounts))
-            last_error = None
+            if req.stream:
+                # 流式请求：延后 Session 创建到 response_wrapper()，确保尽快返回 StreamingResponse，避免客户端 60s 超时
+                account_manager = await multi_account_mgr.get_account(None, request_id)
+                is_new_conversation = True
+                logger.info(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] 新对话已选定账户，延后创建Session")
+            else:
+                max_account_tries = min(MAX_NEW_SESSION_TRIES, len(multi_account_mgr.accounts))
+                last_error = None
 
-            for attempt in range(max_account_tries):
-                try:
-                    account_manager = await multi_account_mgr.get_account(None, request_id)
-                    google_session = await create_google_session(account_manager, http_client, USER_AGENT, request_id)
-                    # 线程安全地绑定账户到此对话
-                    await multi_account_mgr.set_session_cache(
-                        conv_key,
-                        account_manager.config.account_id,
-                        google_session
-                    )
-                    is_new_conversation = True
-                    logger.info(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] 新会话创建并绑定账户")
-                    # 记录账号池状态（账户可用）
-                    uptime_tracker.record_request("account_pool", True)
-                    break
-                except Exception as e:
-                    last_error = e
-                    error_type = type(e).__name__
-                    # 安全获取账户ID
-                    account_id = account_manager.config.account_id if 'account_manager' in locals() and account_manager else 'unknown'
-                    logger.error(f"[CHAT] [req_{request_id}] 账户 {account_id} 创建会话失败 (尝试 {attempt + 1}/{max_account_tries}) - {error_type}: {str(e)}")
-                    # 记录账号池状态（单个账户失败）
-                    status_code = e.status_code if isinstance(e, HTTPException) else None
-                    uptime_tracker.record_request("account_pool", False, status_code=status_code)
-                    if attempt == max_account_tries - 1:
-                        logger.error(f"[CHAT] [req_{request_id}] 所有账户均不可用")
-                        status = classify_error_status(503, last_error if isinstance(last_error, Exception) else Exception("account_pool_unavailable"))
-                        await finalize_result(status, 503, f"All accounts unavailable: {str(last_error)[:100]}")
-                        raise HTTPException(503, f"All accounts unavailable: {str(last_error)[:100]}")
-                    # 继续尝试下一个账户
+                for attempt in range(max_account_tries):
+                    try:
+                        account_manager = await multi_account_mgr.get_account(None, request_id)
+                        google_session = await create_google_session(account_manager, http_client, USER_AGENT, request_id)
+                        # 线程安全地绑定账户到此对话
+                        await multi_account_mgr.set_session_cache(
+                            conv_key,
+                            account_manager.config.account_id,
+                            google_session
+                        )
+                        is_new_conversation = True
+                        logger.info(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] 新会话创建并绑定账户")
+                        # 记录账号池状态（账户可用）
+                        uptime_tracker.record_request("account_pool", True)
+                        break
+                    except Exception as e:
+                        last_error = e
+                        error_type = type(e).__name__
+                        # 安全获取账户ID
+                        account_id = account_manager.config.account_id if account_manager is not None else 'unknown'
+                        logger.error(f"[CHAT] [req_{request_id}] 账户 {account_id} 创建会话失败 (尝试 {attempt + 1}/{max_account_tries}) - {error_type}: {str(e)}")
+                        # 记录账号池状态（单个账户失败）
+                        status_code = e.status_code if isinstance(e, HTTPException) else None
+                        uptime_tracker.record_request("account_pool", False, status_code=status_code)
+                        if attempt == max_account_tries - 1:
+                            logger.error(f"[CHAT] [req_{request_id}] 所有账户均不可用")
+                            status = classify_error_status(503, last_error if isinstance(last_error, Exception) else Exception("account_pool_unavailable"))
+                            await finalize_result(status, 503, f"All accounts unavailable: {str(last_error)[:100]}")
+                            raise HTTPException(503, f"All accounts unavailable: {str(last_error)[:100]}")
+                        # 继续尝试下一个账户
+
+    if account_manager is None:
+        await finalize_result("error", 503, "No account selected")
+        raise HTTPException(503, "No account selected")
 
     # 提取用户消息内容用于日志
     if req.messages:
@@ -1610,6 +1643,12 @@ async def chat_impl(
     async def response_wrapper():
         nonlocal account_manager  # 允许修改外层的 account_manager
 
+        assert account_manager is not None
+
+        # 先发一个 SSE 注释帧，避免客户端/代理的 first-byte/idle 超时
+        if req.stream:
+            yield ": init\n\n"
+
         retry_count = 0
         max_retries = MAX_REQUEST_RETRIES  # 使用配置的最大重试次数
 
@@ -1629,7 +1668,20 @@ async def chat_impl(
                 cached = multi_account_mgr.global_session_cache.get(conv_key)
                 if not cached:
                     logger.warning(f"[CHAT] [{account_manager.config.account_id}] [req_{request_id}] 缓存已清理，重建Session")
-                    new_sess = await create_google_session(account_manager, http_client, USER_AGENT, request_id)
+
+                    if req.stream:
+                        create_task = asyncio.create_task(
+                            create_google_session(account_manager, http_client, USER_AGENT, request_id)
+                        )
+                        while True:
+                            try:
+                                new_sess = await asyncio.wait_for(create_task, timeout=15)
+                                break
+                            except asyncio.TimeoutError:
+                                yield ": keep-alive\n\n"
+                    else:
+                        new_sess = await create_google_session(account_manager, http_client, USER_AGENT, request_id)
+
                     await multi_account_mgr.set_session_cache(
                         conv_key,
                         account_manager.config.account_id,
@@ -1645,11 +1697,41 @@ async def chat_impl(
                 # 注意：每次重试如果是新 Session，都需要重新上传图片
                 if current_images and not current_file_ids:
                     for img in current_images:
-                        fid = await upload_context_file(current_session, img["mime"], img["data"], account_manager, http_client, USER_AGENT, request_id)
+                        if req.stream:
+                            upload_task = asyncio.create_task(
+                                upload_context_file(
+                                    current_session,
+                                    img["mime"],
+                                    img["data"],
+                                    account_manager,
+                                    http_client,
+                                    USER_AGENT,
+                                    request_id,
+                                )
+                            )
+                            while True:
+                                try:
+                                    fid = await asyncio.wait_for(upload_task, timeout=15)
+                                    break
+                                except asyncio.TimeoutError:
+                                    yield ": keep-alive\n\n"
+                        else:
+                            fid = await upload_context_file(
+                                current_session,
+                                img["mime"],
+                                img["data"],
+                                account_manager,
+                                http_client,
+                                USER_AGENT,
+                                request_id,
+                            )
+
                         current_file_ids.append(fid)
 
                 # B. 准备文本 (重试模式下发全文)
-                if current_retry_mode:
+                if current_retry_mode and len(req.messages) > 1:
+                    # 只有在多轮对话/包含更多上下文时才拼接 "User:/Assistant:" 前缀。
+                    # 单轮对话直接发送原始用户文本，避免影响上游工具触发（例如图片生成）。
                     current_text = build_full_context_text(req.messages)
 
                 # C. 发起对话
@@ -1818,7 +1900,16 @@ async def chat_impl(
                     return
 
     if req.stream:
-        return StreamingResponse(response_wrapper(), media_type="text/event-stream")
+        return StreamingResponse(
+            response_wrapper(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     
     full_content = ""
     full_reasoning = ""
@@ -1886,25 +1977,52 @@ def parse_images_from_response(data_list: list) -> tuple[list, str]:
 
             # 检查file字段（图片生成的关键）
             file_info = content.get("file")
-            if file_info and file_info.get("fileId"):
-                file_ids.append({
-                    "fileId": file_info["fileId"],
-                    "mimeType": file_info.get("mimeType", "image/png")
-                })
+            if not isinstance(file_info, dict):
+                continue
+
+            fid = file_info.get("fileId")
+            if not isinstance(fid, str) or not fid:
+                continue
+
+            mime = file_info.get("mimeType")
+            if not isinstance(mime, str) or not mime:
+                mime = "image/png"
+
+            file_ids.append({
+                "fileId": fid,
+                "mimeType": mime,
+            })
 
     return file_ids, session_name
 
 
-async def stream_chat_generator(session: str, text_content: str, file_ids: List[str], model_name: str, chat_id: str, created_time: int, account_manager: AccountManager, is_stream: bool = True, request_id: str = "", request: Request = None):
+async def stream_chat_generator(
+    session: str,
+    text_content: str,
+    file_ids: List[str],
+    model_name: str,
+    chat_id: str,
+    created_time: int,
+    account_manager: AccountManager,
+    is_stream: bool = True,
+    request_id: str = "",
+    request: Optional[Request] = None,
+):
     start_time = time.time()
     full_content = ""
     first_response_time = None
+    saw_text = False
 
     # 记录发送给API的内容
     text_preview = text_content[:500] + "...(已截断)" if len(text_content) > 500 else text_content
     logger.info(f"[API] [{account_manager.config.account_id}] [req_{request_id}] 发送内容: {text_preview}")
     if file_ids:
         logger.info(f"[API] [{account_manager.config.account_id}] [req_{request_id}] 附带文件: {len(file_ids)}个")
+
+    # 先发一个 role chunk，避免客户端/代理的 first-byte 超时
+    if is_stream:
+        chunk = create_chunk(chat_id, created_time, model_name, {"role": "assistant"}, None)
+        yield f"data: {chunk}\n\n"
 
     jwt = await account_manager.get_jwt(request_id)
     headers = get_common_headers(jwt, USER_AGENT)
@@ -1941,10 +2059,6 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
             "modelId": target_model_id
         }
 
-    if is_stream:
-        chunk = create_chunk(chat_id, created_time, model_name, {"role": "assistant"}, None)
-        yield f"data: {chunk}\n\n"
-
     # 使用流式请求
     json_objects = []  # 收集所有响应对象用于图片解析
     file_ids_info = None  # 保存图片信息
@@ -1960,9 +2074,42 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
             uptime_tracker.record_request(model_name, False, status_code=r.status_code)
             raise HTTPException(status_code=r.status_code, detail=f"Upstream Error {error_text.decode()}")
 
-        # 使用异步解析器处理 JSON 数组流
+        # 使用异步解析器处理 JSON 数组流。
+        # 注意：部分客户端（例如 CherryStudio）可能存在 60s 的 idle timeout。
+        # 这里通过 SSE keep-alive 注释行，确保长连接在无 token 输出时也能持续收到字节流。
         try:
-            async for json_obj in parse_json_array_stream_async(r.aiter_lines()):
+            keepalive_interval_s = 15
+            queue: asyncio.Queue[tuple[str, object | None]] = asyncio.Queue()
+
+            async def _reader():
+                try:
+                    async for json_obj in parse_json_array_stream_async(r.aiter_lines()):
+                        await queue.put(("json", json_obj))
+                except Exception as exc:
+                    await queue.put(("error", exc))
+                finally:
+                    await queue.put(("done", None))
+
+            reader_task = asyncio.create_task(_reader())
+
+            while True:
+                try:
+                    kind, payload = await asyncio.wait_for(queue.get(), timeout=keepalive_interval_s)
+                except asyncio.TimeoutError:
+                    if is_stream:
+                        yield ": keep-alive\n\n"
+                    continue
+
+                if kind == "done":
+                    break
+                if kind == "error":
+                    assert isinstance(payload, Exception)
+                    raise payload
+                if kind != "json":
+                    continue
+
+                assert isinstance(payload, dict)
+                json_obj = payload
                 json_objects.append(json_obj)  # 收集响应
 
                 # 提取文本内容
@@ -1981,10 +2128,15 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
                     else:
                         if first_response_time is None:
                             first_response_time = time.time()
+                            if request is not None:
+                                request.state.first_response_time = first_response_time
                         # 正常内容使用 content 字段
                         full_content += text
+                        saw_text = True
                         chunk = create_chunk(chat_id, created_time, model_name, {"content": text}, None)
                         yield f"data: {chunk}\n\n"
+
+            await reader_task
 
             # 提取图片信息（在 async with 块内）
             if json_objects:
@@ -2009,6 +2161,49 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
             raise
 
     # 在 async with 块外处理图片下载（避免占用上游连接）
+    if not saw_text and not file_ids_info:
+        # 上游偶发会返回只包含 sessionInfo/keepalive 的事件（无 replies、无 fileId），
+        # 这会导致客户端看到“空响应”。这里同时：
+        # 1) 记录结构化摘要（不包含文本内容）便于排查
+        # 2) 给客户端回一个可见的提示，避免误以为服务端无响应
+        try:
+            event_summaries: list[dict] = []
+            for obj in json_objects[:10]:
+                if not isinstance(obj, dict):
+                    continue
+                sar = obj.get("streamAssistResponse")
+                summary: dict = {
+                    "keys": sorted(list(obj.keys()))[:20],
+                    "has_streamAssistResponse": isinstance(sar, dict),
+                }
+                if isinstance(sar, dict):
+                    answer = sar.get("answer")
+                    replies = (answer or {}).get("replies") if isinstance(answer, dict) else None
+                    summary.update(
+                        {
+                            "sar_keys": sorted(list(sar.keys()))[:20],
+                            "reply_count": len(replies) if isinstance(replies, list) else None,
+                        }
+                    )
+                event_summaries.append(summary)
+
+            logger.warning(
+                f"[API] [{account_manager.config.account_id}] [req_{request_id}] 上游未返回文本/图片 (events={len(json_objects)}) summaries={event_summaries}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[API] [{account_manager.config.account_id}] [req_{request_id}] 上游未返回文本/图片 (events={len(json_objects)}); summary failed: {type(e).__name__}"
+            )
+
+        if is_stream:
+            tip = (
+                "\n\n⚠️ 上游返回为空（未返回文本或图片）。\n"
+                "可能原因：该模型/接口未触发图片生成，或上游本次返回了空事件流。\n"
+                "建议：1) 换模型试试 gemini-2.5-pro 2) 允许输出少量文字说明 3) 稍后重试。\n\n"
+            )
+            chunk = create_chunk(chat_id, created_time, model_name, {"content": tip}, None)
+            yield f"data: {chunk}\n\n"
+
     if file_ids_info:
         file_ids, session_name = file_ids_info
         try:
@@ -2018,8 +2213,14 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
             # 并行下载所有图片
             download_tasks = []
             for file_info in file_ids:
-                fid = file_info["fileId"]
-                mime = file_info["mimeType"]
+                if not isinstance(file_info, dict):
+                    continue
+                fid = file_info.get("fileId")
+                mime = file_info.get("mimeType")
+                if not isinstance(fid, str) or not fid:
+                    continue
+                if not isinstance(mime, str) or not mime:
+                    mime = "image/png"
                 meta = file_metadata.get(fid, {})
                 correct_session = meta.get("session") or session_name
                 task = download_image_with_jwt(account_manager, correct_session, fid, http_client, USER_AGENT, request_id)
@@ -2030,7 +2231,7 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
             # 处理下载结果
             success_count = 0
             for idx, ((fid, mime, _), result) in enumerate(zip(download_tasks, results), 1):
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     logger.error(f"[IMAGE] [{account_manager.config.account_id}] [req_{request_id}] 图片{idx}下载失败: {type(result).__name__}: {str(result)[:100]}")
                     # 降级处理：返回错误提示而不是静默失败
                     error_msg = f"\n\n⚠️ 图片 {idx} 下载失败\n\n"
@@ -2039,17 +2240,24 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
                     continue
 
                 try:
+                    if isinstance(result, bytearray):
+                        result_bytes = bytes(result)
+                    elif isinstance(result, bytes):
+                        result_bytes = result
+                    else:
+                        raise TypeError(f"unexpected image bytes type: {type(result).__name__}")
+
                     # 根据配置选择输出格式
                     output_format = config_manager.image_output_format
 
                     if output_format == "base64":
                         # Base64 模式：直接返回 base64 编码
-                        b64 = base64.b64encode(result).decode()
+                        b64 = base64.b64encode(result_bytes).decode()
                         markdown = f"\n\n![生成的图片](data:{mime};base64,{b64})\n\n"
                         logger.info(f"[IMAGE] [{account_manager.config.account_id}] [req_{request_id}] 图片{idx}已编码为base64")
                     else:
                         # URL 模式：保存到本地并返回 URL
-                        image_url = save_image_to_hf(result, chat_id, fid, mime, base_url, IMAGE_DIR)
+                        image_url = save_image_to_hf(result_bytes, chat_id, fid, mime, base_url, IMAGE_DIR)
                         markdown = f"\n\n![生成的图片]({image_url})\n\n"
                         logger.info(f"[IMAGE] [{account_manager.config.account_id}] [req_{request_id}] 图片{idx}已保存: {image_url}")
 
@@ -2147,7 +2355,7 @@ async def get_public_display():
 async def get_public_logs(request: Request, limit: int = 100):
     try:
         # 基于IP的访问统计（24小时内去重）
-        client_ip = request.client.host
+        client_ip = request.client.host if request.client else "unknown"
         current_time = time.time()
 
         async with stats_lock:
