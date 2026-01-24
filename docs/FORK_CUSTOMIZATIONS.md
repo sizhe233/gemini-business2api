@@ -185,6 +185,26 @@ app.include_router(external_router)
 
 ## 四、合并历史记录
 
+### 2026-01-24 合并上游 (26 commits)
+
+| 项目 | 内容 |
+|------|------|
+| **合并提交** | `8d1b07e` |
+| **上游基线** | `upstream/main@91cee57` |
+| **上游提交数** | 26 个 |
+| **备份分支** | `backup/pre-upstream-merge-20260124` |
+| **合并前提交** | `3f417fe` (fix(chat): ignore internal upstream-empty notices in context) |
+| **冲突文件** | `main.py`, `frontend/package-lock.json`, `README.md`, `docs/README_EN.md` |
+
+**冲突处理**:
+- `main.py`: 接受上游更新，同时保留 fork 的 External API 导入/注册代码块
+- `frontend/package-lock.json`: 使用上游版本解决冲突
+- `README.md` / `docs/README_EN.md`: 保留 fork 的 HF 部署徽章与提示，并同步上游新增功能描述 (video generation)
+
+**验证**:
+- 自定义接口保留: `create_external_routes` / `external_router` 仍在 `main.py` 中挂载，`verify_admin_key()` 仍存在于 `core/auth.py`
+- 语法检查: `python3 -m py_compile main.py core/external_api.py core/auth.py core/message.py`
+
 ### 2026-01-22 合并上游 (21 commits)
 
 | 项目 | 内容 |
