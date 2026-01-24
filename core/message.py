@@ -17,6 +17,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_internal_notice(text: str) -> bool:
+    """判断是否为服务端注入的诊断提示。
+
+    这些提示用于给客户端可见的错误/建议，但不应进入后续对话上下文，否则会污染会话指纹与提示词。
+    """
+    t = (text or "").strip()
+    return t.startswith("⚠️ 上游返回为空") or ("上游未返回文本/图片" in t)
+
+
 def get_conversation_key(messages: List[dict], client_identifier: str = "") -> str:
     """
     生成对话指纹（使用前3条消息+客户端标识，确保唯一性）
@@ -45,6 +54,10 @@ def get_conversation_key(messages: List[dict], client_identifier: str = "") -> s
             text = extract_text_from_content(content)
         else:
             text = str(content)
+
+        # 过滤服务端诊断提示，避免污染会话指纹
+        if role == "assistant" and _is_internal_notice(text):
+            continue
 
         # 标准化：去除首尾空白，转小写
         text = text.strip().lower()
@@ -143,6 +156,10 @@ def build_full_context_text(messages: List['Message']) -> str:
     for msg in messages:
         role = "User" if msg.role in ["user", "system"] else "Assistant"
         content_str = extract_text_from_content(msg.content)
+
+        # 过滤服务端诊断提示，避免污染后续对话上下文
+        if msg.role == "assistant" and _is_internal_notice(content_str):
+            continue
 
         # 为多模态消息添加图片标记
         if isinstance(msg.content, list):
