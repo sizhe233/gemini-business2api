@@ -45,7 +45,8 @@ class BasicConfig(BaseModel):
     """基础配置"""
     api_key: str = Field(default="", description="API访问密钥（留空则公开访问）")
     base_url: str = Field(default="", description="服务器URL（留空则自动检测）")
-    proxy: str = Field(default="", description="代理地址")
+    proxy_for_auth: str = Field(default="", description="账户操作代理地址（注册/登录/刷新，留空则不使用代理）")
+    proxy_for_chat: str = Field(default="", description="对话操作代理地址（JWT/会话/消息，留空则不使用代理）")
     duckmail_base_url: str = Field(default="https://api.duckmail.sbs", description="DuckMail API地址")
     duckmail_api_key: str = Field(default="", description="DuckMail API key")
     duckmail_verify_ssl: bool = Field(default=True, description="DuckMail SSL校验")
@@ -66,6 +67,18 @@ class ImageGenerationConfig(BaseModel):
     output_format: str = Field(default="base64", description="图片输出格式：base64 或 url")
 
 
+class VideoGenerationConfig(BaseModel):
+    """视频生成配置"""
+    output_format: str = Field(default="html", description="视频输出格式：html/url/markdown")
+
+    @validator("output_format")
+    def validate_output_format(cls, v):
+        allowed = ["html", "url", "markdown"]
+        if v not in allowed:
+            raise ValueError(f"output_format 必须是 {allowed} 之一")
+        return v
+
+
 class RetryConfig(BaseModel):
     """重试策略配置"""
     max_new_session_tries: int = Field(default=5, ge=1, le=20, description="新会话尝试账户数")
@@ -73,7 +86,7 @@ class RetryConfig(BaseModel):
     max_account_switch_tries: int = Field(default=5, ge=1, le=20, description="账户切换尝试次数")
     account_failure_threshold: int = Field(default=3, ge=1, le=10, description="账户失败阈值")
     rate_limit_cooldown_seconds: int = Field(default=3600, ge=3600, le=43200, description="429冷却时间（秒）")
-    session_cache_ttl_seconds: int = Field(default=3600, ge=300, le=86400, description="会话缓存时间（秒）")
+    session_cache_ttl_seconds: int = Field(default=3600, ge=0, le=86400, description="会话缓存时间（秒，0表示禁用缓存）")
     auto_refresh_accounts_seconds: int = Field(default=60, ge=0, le=600, description="自动刷新账号间隔（秒，0禁用）")
 
 
@@ -102,6 +115,7 @@ class AppConfig(BaseModel):
     # 业务配置（环境变量 > YAML > 默认值）
     basic: BasicConfig
     image_generation: ImageGenerationConfig
+    video_generation: VideoGenerationConfig = Field(default_factory=VideoGenerationConfig)
     retry: RetryConfig
     public_display: PublicDisplayConfig
     session: SessionConfig
@@ -147,10 +161,31 @@ class ConfigManager:
         register_domain_raw = basic_data.get("register_domain", "")
         duckmail_api_key_raw = basic_data.get("duckmail_api_key", "")
 
+        # 兼容旧配置：如果存在旧的 proxy 字段，迁移到新字段
+        old_proxy = basic_data.get("proxy", "")
+        old_proxy_for_auth_bool = basic_data.get("proxy_for_auth")
+        old_proxy_for_chat_bool = basic_data.get("proxy_for_chat")
+
+        # 新配置优先，如果没有新配置则从旧配置迁移
+        proxy_for_auth = basic_data.get("proxy_for_auth", "")
+        proxy_for_chat = basic_data.get("proxy_for_chat", "")
+
+        # 如果新配置为空且存在旧配置，则迁移
+        if not proxy_for_auth and old_proxy:
+            # 如果旧配置中 proxy_for_auth 是布尔值且为 True，则使用旧的 proxy
+            if isinstance(old_proxy_for_auth_bool, bool) and old_proxy_for_auth_bool:
+                proxy_for_auth = old_proxy
+
+        if not proxy_for_chat and old_proxy:
+            # 如果旧配置中 proxy_for_chat 是布尔值且为 True，则使用旧的 proxy
+            if isinstance(old_proxy_for_chat_bool, bool) and old_proxy_for_chat_bool:
+                proxy_for_chat = old_proxy
+
         basic_config = BasicConfig(
             api_key=basic_data.get("api_key") or "",
             base_url=basic_data.get("base_url") or "",
-            proxy=basic_data.get("proxy") or "",
+            proxy_for_auth=str(proxy_for_auth or "").strip(),
+            proxy_for_chat=str(proxy_for_chat or "").strip(),
             duckmail_base_url=basic_data.get("duckmail_base_url") or "https://api.duckmail.sbs",
             duckmail_api_key=str(duckmail_api_key_raw or "").strip(),
             duckmail_verify_ssl=_parse_bool(basic_data.get("duckmail_verify_ssl"), True),
@@ -164,6 +199,11 @@ class ConfigManager:
         # 4. 加载其他配置（从 YAML）
         image_generation_config = ImageGenerationConfig(
             **yaml_data.get("image_generation", {})
+        )
+
+        # 加载视频生成配置
+        video_generation_config = VideoGenerationConfig(
+            **yaml_data.get("video_generation", {})
         )
 
         # 加载重试配置，自动修正不在 1-12 小时范围内的值
@@ -188,6 +228,7 @@ class ConfigManager:
             security=security_config,
             basic=basic_config,
             image_generation=image_generation_config,
+            video_generation=video_generation_config,
             retry=retry_config,
             public_display=public_display_config,
             session=session_config
@@ -254,9 +295,14 @@ class ConfigManager:
         return self._config.security.session_secret_key
 
     @property
-    def proxy(self) -> str:
-        """代理地址"""
-        return self._config.basic.proxy
+    def proxy_for_auth(self) -> str:
+        """账户操作代理地址"""
+        return self._config.basic.proxy_for_auth
+
+    @property
+    def proxy_for_chat(self) -> str:
+        """对话操作代理地址"""
+        return self._config.basic.proxy_for_chat
 
     @property
     def base_url(self) -> str:
@@ -287,6 +333,11 @@ class ConfigManager:
     def image_output_format(self) -> str:
         """图片输出格式"""
         return self._config.image_generation.output_format
+
+    @property
+    def video_output_format(self) -> str:
+        """视频输出格式"""
+        return self._config.video_generation.output_format
 
     @property
     def session_expire_hours(self) -> int:
@@ -353,6 +404,10 @@ class _ConfigProxy:
     @property
     def image_generation(self):
         return config_manager.config.image_generation
+
+    @property
+    def video_generation(self):
+        return config_manager.config.video_generation
 
     @property
     def retry(self):

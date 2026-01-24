@@ -41,9 +41,22 @@
                   class="w-full rounded-2xl border border-input bg-background px-3 py-2 text-sm"
                   placeholder="自动检测或手动填写"
                 />
-                <label class="block text-xs text-muted-foreground">代理地址</label>
+                <div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>账户操作代理</span>
+                  <HelpTip text="用于注册/登录/刷新操作的代理，留空则禁用" />
+                </div>
                 <input
-                  v-model="localSettings.basic.proxy"
+                  v-model="localSettings.basic.proxy_for_auth"
+                  type="text"
+                  class="w-full rounded-2xl border border-input bg-background px-3 py-2 text-sm"
+                  placeholder="http://127.0.0.1:7890"
+                />
+                <div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>聊天操作代理</span>
+                  <HelpTip text="用于 JWT/会话/消息操作的代理，留空则禁用" />
+                </div>
+                <input
+                  v-model="localSettings.basic.proxy_for_chat"
                   type="text"
                   class="w-full rounded-2xl border border-input bg-background px-3 py-2 text-sm"
                   placeholder="http://127.0.0.1:7890"
@@ -176,6 +189,19 @@
             </div>
 
             <div class="rounded-2xl border border-border bg-card p-4">
+              <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground">视频生成</p>
+              <div class="mt-4 space-y-3">
+                <label class="block text-xs text-muted-foreground">输出格式（使用 gemini-veo 模型时生效）</label>
+                <SelectMenu
+                  v-model="localSettings.video_generation.output_format"
+                  :options="videoOutputOptions"
+                  placement="up"
+                  class="w-full"
+                />
+              </div>
+            </div>
+
+            <div class="rounded-2xl border border-border bg-card p-4">
               <p class="text-xs uppercase tracking-[0.3em] text-muted-foreground">公开展示</p>
               <div class="mt-4 space-y-3">
                 <label class="block text-xs text-muted-foreground">Logo 地址</label>
@@ -221,7 +247,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useSettingsStore } from '@/stores'
+import { useSettingsStore } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
 import SelectMenu from '@/components/ui/SelectMenu.vue'
 import Checkbox from '@/components/ui/Checkbox.vue'
@@ -259,6 +285,11 @@ const imageOutputOptions = [
   { label: 'Base64 编码', value: 'base64' },
   { label: 'URL 链接', value: 'url' },
 ]
+const videoOutputOptions = [
+  { label: 'HTML 视频标签', value: 'html' },
+  { label: 'URL 链接', value: 'url' },
+  { label: 'Markdown 格式', value: 'markdown' },
+]
 const imageModelOptions = computed(() => {
   const baseOptions = [
     { label: 'Gemini 3 Pro Preview', value: 'gemini-3-pro-preview' },
@@ -266,6 +297,8 @@ const imageModelOptions = computed(() => {
     { label: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
     { label: 'Gemini 2.5 Flash', value: 'gemini-2.5-flash' },
     { label: 'Gemini Auto', value: 'gemini-auto' },
+    { label: 'Gemini Imagen (图片生成)', value: 'gemini-imagen' },
+    { label: 'Gemini Veo (视频生成)', value: 'gemini-veo' },
   ]
 
   const selected = localSettings.value?.image_generation.supported_models || []
@@ -283,6 +316,8 @@ watch(settings, (value) => {
   const next = JSON.parse(JSON.stringify(value))
   next.image_generation = next.image_generation || { enabled: false, supported_models: [], output_format: 'base64' }
   next.image_generation.output_format ||= 'base64'
+  next.video_generation = next.video_generation || { output_format: 'html' }
+  next.video_generation.output_format ||= 'html'
   next.basic = next.basic || {}
   next.basic.duckmail_base_url ||= 'https://api.duckmail.sbs'
   next.basic.duckmail_verify_ssl = next.basic.duckmail_verify_ssl ?? true

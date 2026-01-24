@@ -16,7 +16,7 @@
 
 <p align="center"><em>💡 Tip: Remote environments (Hugging Face/Linux) and local environments can share the same database for automatic account data synchronization</em></p>
 
-<p align="center">Convert Gemini Business to OpenAI-compatible API with multi-account load balancing, image generation, multimodal capabilities, and built-in admin panel.</p>
+<p align="center">Convert Gemini Business to OpenAI-compatible API with multi-account load balancing, image generation, video generation, multimodal capabilities, and built-in admin panel.</p>
 
 ---
 
@@ -49,6 +49,7 @@
 - ✅ Streaming output - Real-time responses
 - ✅ Multimodal input - 100+ file types (images, PDF, Office docs, audio, video, code, etc.)
 - ✅ Image generation & image-to-image - Configurable models, Base64 or URL output
+- ✅ Video generation - Dedicated model with HTML/URL/Markdown output formats
 - ✅ Smart file handling - Auto file type detection, supports URL and Base64
 - ✅ Logging & monitoring - Real-time status and statistics
 - ✅ Proxy support - Configure in the admin settings
@@ -57,13 +58,19 @@
 
 ## 🤖 Model Capabilities
 
-| Model ID                 | Vision | Native Web | File Multimodal | Image Gen |
-| ------------------------ | ------ | ---------- | --------------- | --------- |
-| `gemini-auto`            | ✅      | ✅          | ✅               | Optional  |
-| `gemini-2.5-flash`       | ✅      | ✅          | ✅               | Optional  |
-| `gemini-2.5-pro`         | ✅      | ✅          | ✅               | Optional  |
-| `gemini-3-flash-preview` | ✅      | ✅          | ✅               | Optional  |
-| `gemini-3-pro-preview`   | ✅      | ✅          | ✅               | Optional  |
+| Model ID                 | Vision | Native Web | File Multimodal | Image Gen | Video Gen |
+| ------------------------ | ------ | ---------- | --------------- | --------- | --------- |
+| `gemini-auto`            | ✅      | ✅          | ✅               | Optional  | -         |
+| `gemini-2.5-flash`       | ✅      | ✅          | ✅               | Optional  | -         |
+| `gemini-2.5-pro`         | ✅      | ✅          | ✅               | Optional  | -         |
+| `gemini-3-flash-preview` | ✅      | ✅          | ✅               | Optional  | -         |
+| `gemini-3-pro-preview`   | ✅      | ✅          | ✅               | Optional  | -         |
+| `gemini-imagen`          | ✅      | ✅          | ✅               | ✅         | -         |
+| `gemini-veo`             | ✅      | ✅          | ✅               | -         | ✅         |
+
+**Virtual Models**:
+- `gemini-imagen`: Dedicated image generation model with forced image generation capability
+- `gemini-veo`: Dedicated video generation model with forced video generation capability
 
 ## 🚀 Quick Start
 
@@ -276,6 +283,5 @@ Configure a PostgreSQL database to persist accounts, settings, and statistics ac
 [![Star History Chart](https://api.star-history.com/svg?repos=Dreamy-rain/gemini-business2api&type=date&legend=top-left)](https://www.star-history.com/#Dreamy-rain/gemini-business2api&type=date&legend=top-left)
 
 **If this project helps you, please give it a ⭐ Star!**
-
 
 
