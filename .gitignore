@@ -49,3 +49,6 @@ Thumbs.db
 gemini_accounts/
 local_script/
 old_version.py
+
+# Local temp artifacts
+/%TEMP%/
